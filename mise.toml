@@ -1,0 +1,10 @@
+# agent: claude — tool versions for mise.
+#
+# This project pins its own versions because it is a separate mix project,
+# and it will become a separate repository. mise reads the nearest config
+# for the directory you are in, so this file wins inside zocam/.
+#
+# Run `mise install` in this directory to get the versions below.
+[tools]
+erlang = "29"
+elixir = "1.20.2"
