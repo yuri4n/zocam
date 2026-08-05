@@ -25,12 +25,14 @@ async function draw() {
     startOnLoad: false,
     securityLevel: 'strict',
     theme: colorMode.value === 'dark' ? 'dark' : 'neutral',
+    // Diagrams keep IBM Plex Mono by the reviewer's choice; site code uses
+    // JetBrains Mono. app.css references the family so @nuxt/fonts ships it.
     fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
     themeVariables: {
-      // The board accent, matched to ui.colors.primary = emerald.
-      primaryColor: colorMode.value === 'dark' ? '#064e3b' : '#a7f3d0',
-      primaryBorderColor: '#10b981',
-      lineColor: '#10b981',
+      // The neon-terminal accent, matched to --ui-primary in app.css.
+      primaryColor: colorMode.value === 'dark' ? '#0b3d24' : '#a7f3d0',
+      primaryBorderColor: '#3ddc84',
+      lineColor: '#3ddc84',
     },
   })
   const { svg: rendered } = await mermaid.render(`mmd-${++renderSeq}`, props.code)
