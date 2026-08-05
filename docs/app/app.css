@@ -1,0 +1,192 @@
+/* agent: claude — whole file.
+   Station-timetable skin. Docus finds this file (app/app.css) and imports it
+   at the END of its generated Tailwind stylesheet, so these rules win over
+   the defaults with equal specificity.
+
+   The look, in one line: a departure board. Monospace headings, sharp
+   corners, near-black background, amber accents, double rules like ═══. */
+
+/* ── Fonts ──────────────────────────────────────────────────────────────
+   Tailwind v4 design tokens. @nuxt/fonts reads these families and
+   self-hosts them at build time: no external font requests at runtime.
+   IBM Plex Sans and Plex Mono are drawn to pair with each other. */
+@theme {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* ── Shape ──────────────────────────────────────────────────────────────
+   A timetable has no rounded corners. --ui-radius drives every Nuxt UI
+   component (buttons, cards, inputs), so one token sharpens the site. */
+:root {
+  --ui-radius: 0rem;
+}
+
+/* ── Dark board (the default mode) ─────────────────────────────────────
+   Near-black, slightly warm grays. These are Nuxt UI's semantic tokens;
+   every component reads colors through them. */
+.dark {
+  --ui-bg: #0a0a0b;
+  --ui-bg-muted: #111113;
+  --ui-bg-elevated: #17171a;
+  --ui-bg-accented: #1f1f23;
+  --ui-border: #26262b;
+  --ui-border-muted: #1f1f23;
+  --ui-border-accented: #3a3a41;
+}
+
+/* Light mode: warm paper instead of pure white, like a printed timetable. */
+:root:not(.dark) {
+  --ui-bg: #faf9f6;
+  --ui-bg-muted: #f2f1ec;
+}
+
+/* ── Type ───────────────────────────────────────────────────────────────
+   Every heading is set in the mono face: that is the board lettering.
+   Body prose stays in Plex Sans for long-form readability. */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-mono);
+  letter-spacing: -0.02em;
+}
+
+/* Dial-tick rule under section headings. */
+main h2 {
+  border-block-end: 1px dashed var(--ui-border-accented);
+  padding-block-end: 0.4rem;
+}
+
+/* ── Timetables ─────────────────────────────────────────────────────────
+   Every markdown table renders as a departure board: mono digits,
+   uppercase column heads, a double rule (═══) closing the head row,
+   and an amber wash on the row under the pointer. */
+main table {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9em;
+}
+
+main thead tr {
+  border-block-end: 3px double var(--ui-border-accented);
+}
+
+main thead th {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.75em;
+  color: var(--ui-text-muted);
+}
+
+main tbody tr {
+  transition: background-color 120ms linear;
+}
+
+main tbody tr:hover {
+  background-color: color-mix(in oklab, var(--ui-primary) 10%, transparent);
+}
+
+/* ── Ornaments ──────────────────────────────────────────────────────────
+   .cursor adds the blinking terminal underscore. steps(1) makes it snap
+   on and off with no fade: boards flip, they do not dissolve. */
+.cursor::after {
+  content: '_';
+  color: var(--ui-primary);
+  animation: cursor-blink 1.2s steps(1) infinite;
+}
+
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Mermaid diagrams: center them, give them board margins, invite the zoom. */
+.mermaid-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-block: 1.5rem;
+  overflow-x: auto;
+  cursor: zoom-in;
+}
+
+/* Figure captions: by convention an italic-only paragraph directly below a
+   figure (see AGENTS.md "Attribution"). Styled as small board lettering. */
+main p:has(> em:only-child) {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--ui-text-muted);
+}
+
+/* The zoom lightbox: a fixed overlay; the canvas moves via one transform. */
+.mermaid-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: color-mix(in srgb, var(--ui-bg) 90%, transparent);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.mermaid-zoom-canvas {
+  will-change: transform;
+  cursor: grab;
+  user-select: none;
+}
+
+.mermaid-zoom-canvas:active {
+  cursor: grabbing;
+}
+
+.mermaid-zoom-canvas svg {
+  max-width: 90vw;
+  height: auto;
+}
+
+.mermaid-zoom-controls {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.mermaid-zoom-controls button {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ui-primary);
+  background: var(--ui-bg-elevated);
+  border: 1px solid var(--ui-primary);
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+}
+
+/* The AI SLOP stamp: a small board chip that marks AI-written pages.
+   Used inline as [AI SLOP]{.ai-slop} at the top of each page. The small
+   length on vertical-align lifts the chip so it sits optically centered
+   on the text line instead of hanging below the baseline. */
+.ai-slop {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.7em;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ui-primary);
+  border: 1px solid var(--ui-primary);
+  padding: 0.08rem 0.45rem;
+  margin-inline-end: 0.5rem;
+  vertical-align: 0.12em;
+}
+
+/* The centered landing-page disclaimer container. */
+.board-note {
+  text-align: center;
+  margin-block: 1.25rem;
+}

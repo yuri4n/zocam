@@ -1,0 +1,18 @@
+{
+  "name": "zocam-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ingest": "node scripts/ingest-exdoc.mjs",
+    "test": "node --test 'scripts/*.test.mjs'",
+    "dev": "node scripts/ingest-exdoc.mjs && nuxt dev",
+    "build": "node scripts/ingest-exdoc.mjs && nuxt build",
+    "generate": "node scripts/ingest-exdoc.mjs && nuxt generate"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "docus": "^5.12.3",
+    "mermaid": "^11.16.1",
+    "nuxt": "^4.4.8"
+  }
+}
