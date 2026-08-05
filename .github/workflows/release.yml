@@ -8,9 +8,11 @@
 # runs the tests, and publishes the package to Hex.pm. `mix hex.publish`
 # also builds the ExDoc pages and uploads them to hexdocs.pm/zocam.
 #
-# Auth: the HEX_API_KEY repository secret. Create the key once with
-#   mix hex.user key generate --key-name gh-actions --permission api:write
-# and store it with: gh secret set HEX_API_KEY
+# Auth: the HEX_API_KEY repository secret. Hex 2.x has no CLI command for
+# key creation, and the API rejects key creation with token auth. Create
+# the key in the browser: https://hex.pm/dashboard/keys — name it
+# gh-actions, give it the api:write permission — then store it with:
+#   gh secret set HEX_API_KEY
 name: Release
 
 on:
