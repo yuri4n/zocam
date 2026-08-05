@@ -20,6 +20,12 @@ defmodule Zocam.Span do
   interval into two. A standalone interval type cannot be closed
   under its own operators.
 
+  Keep the names apart: `Zocam.Span.Arc` is *one symbolic piece*
+  and `t:t/0` is the *symbolic set* built over such pieces, while
+  `t:Zocam.Intervals.interval/0` is *one concrete piece* and
+  `t:Zocam.Intervals.t/0` is the *concrete set*. "The four names" in
+  the `Zocam` moduledoc shows the full two-by-two map.
+
   ## Two evaluation regimes
 
   - **Within one cycle** the algebra is eager where it can be: when
@@ -84,11 +90,20 @@ defmodule Zocam.Span do
   can ground to *two* kernel intervals on a fall-back day (the wall
   window exists twice), and a wall time inside a spring-forward gap
   grounds to nothing.
+
+  ## One calendar
+
+  Every `DateTime` this module takes must be on `Calendar.ISO`:
+  `absolute!/1`, the `ground/3` horizon, `member?/2`, and `stream/3`
+  all check it and refuse anything else. The wall dates that come out
+  of those instants are read as ISO dates — `instance_index/2` reads
+  `date.year` and `date.month` as Gregorian numbers — so the check is
+  what makes the reading true. See `Zocam.ISO`.
   """
 
   use TypedStruct
 
-  alias Zocam.{Intervals, Point}
+  alias Zocam.{Intervals, ISO, Point}
 
   # [claude-code] A step samples an arc every n units. The unit must
   # be the arc's grain, a coarser unit on its chain (day-grain bounds
@@ -119,6 +134,13 @@ defmodule Zocam.Span do
     constructors normalize it to `nil` — one canonical spelling for
     one meaning. The overflow policy comes from the bound points and
     acts where a day number lands in a short month.
+
+    An arc is not a `t:Zocam.Intervals.interval/0`. The arc is
+    symbolic and *repeats* — "Fri..Mon" happens once in every week.
+    The interval is concrete and happens *once*. `Zocam.Span.ground/3`
+    turns each instance of an arc into 0, 1, or 2 concrete intervals
+    (a DST gap, a normal day, a DST fold). See "The four names" in
+    the `Zocam` moduledoc for the full map.
     """
     use TypedStruct
 
@@ -397,7 +419,12 @@ defmodule Zocam.Span do
   a member on Feb 28 under `:clamp`).
   """
   @spec member?(t(), DateTime.t()) :: boolean()
-  def member?(span, %DateTime{} = at), do: member_at(span, at)
+  def member?(span, %DateTime{} = at) do
+    # [claude-code] Added 2026-08-05 (Linear YUR-57). member_at/2 turns
+    # the instant into a wall date and reads its numbers as ISO.
+    ISO.check!(at, "the member?/2 instant")
+    member_at(span, at)
+  end
 
   # [claude-code]
   @doc """
@@ -438,6 +465,14 @@ defmodule Zocam.Span do
   """
   @spec stream(t(), DateTime.t(), Timex.Types.valid_timezone()) :: Enumerable.t()
   def stream(span, %DateTime{} = from, timezone) do
+    # [claude-code] Added 2026-08-05 (Linear YUR-57). The check sits
+    # here, not inside the start function: Stream.resource/3 is lazy,
+    # so a check in the start function would fire on the first take,
+    # far away from the call that holds the mistake. Every later cursor
+    # comes from DateTime.add/3 on this value, and that keeps the
+    # calendar, so one check at the source covers the whole stream.
+    ISO.check!(from, "the stream/3 start instant")
+
     Stream.resource(
       fn -> {from, true} end,
       fn {cursor, first?} ->
@@ -1285,12 +1320,17 @@ defmodule Zocam.Span do
 
   @spec check_absolute!(map()) :: t()
   defp check_absolute!(interval) do
-    for {side, value} <- [from: interval.from, until: interval.until],
-        value != nil,
-        not match?(%DateTime{}, value) do
-      raise ArgumentError,
-            "absolute!/1 #{side}: must be a DateTime or nil, got #{inspect(value)}. " <>
-              "Wall values (Time, month atoms) belong to Point and arc!/1."
+    for {side, value} <- [from: interval.from, until: interval.until], value != nil do
+      unless match?(%DateTime{}, value) do
+        raise ArgumentError,
+              "absolute!/1 #{side}: must be a DateTime or nil, got #{inspect(value)}. " <>
+                "Wall values (Time, month atoms) belong to Point and arc!/1."
+      end
+
+      # [claude-code] Added 2026-08-05 (Linear YUR-57). The shape check
+      # above lets any calendar through; ground/3 later reads the wall
+      # numbers of this bound as ISO numbers.
+      ISO.check!(value, "the absolute!/1 #{side} bound")
     end
 
     # Closings share the kernel's convention: a bounded side is :open
@@ -1314,7 +1354,14 @@ defmodule Zocam.Span do
   end
 
   @spec check_horizon!(term()) :: Intervals.interval()
-  defp check_horizon!(%{from: %DateTime{}, until: %DateTime{}} = horizon), do: horizon
+  defp check_horizon!(%{from: %DateTime{} = from, until: %DateTime{} = until} = horizon) do
+    # [claude-code] Added 2026-08-05 (Linear YUR-57). eval/3 walks the
+    # cycle instances between these two bounds by their wall-clock
+    # dates, which it reads as ISO dates.
+    ISO.check!(from, "the ground/3 horizon from bound")
+    ISO.check!(until, "the ground/3 horizon until bound")
+    horizon
+  end
 
   defp check_horizon!(other) do
     raise ArgumentError,

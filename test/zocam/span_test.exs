@@ -456,4 +456,63 @@ defmodule Zocam.SpanTest do
       end
     end
   end
+
+  # [claude-code] Added 2026-08-05 for Linear YUR-57. Span takes a
+  # `%DateTime{}` from the caller in four places. A foreign-calendar
+  # instant reached `DateTime.to_naive/1`, and from there its year,
+  # month, and day fields were read as ISO numbers: a wrong answer with
+  # no crash. Every door now runs the same check. The arc bounds need no
+  # door of their own — they are `Zocam.Point` values, checked there.
+  describe "the ISO calendar" do
+    alias Zocam.ForeignCalendar
+
+    @foreign_at %{~U[2026-05-06 12:00:00Z] | calendar: ForeignCalendar}
+
+    setup do
+      %{span: Span.of(Point.weekday(:wednesday))}
+    end
+
+    test "absolute!/1 refuses a foreign bound, on either side" do
+      for side <- [:from, :until] do
+        interval =
+          %{
+            from: ~U[2026-05-01 00:00:00Z],
+            until: ~U[2026-06-01 00:00:00Z],
+            left: :closed,
+            right: :open
+          }
+          |> Map.put(side, @foreign_at)
+
+        assert_raise ArgumentError, ~r/Zocam\.ForeignCalendar/, fn ->
+          Span.absolute!(interval)
+        end
+      end
+    end
+
+    test "ground/3 refuses a foreign horizon", %{span: span} do
+      assert_raise ArgumentError, ~r/Zocam\.ForeignCalendar/, fn ->
+        Span.ground(span, horizon(@foreign_at, ~U[2026-06-01 00:00:00Z]), @utc)
+      end
+    end
+
+    test "member?/2 refuses a foreign instant", %{span: span} do
+      error = assert_raise ArgumentError, fn -> Span.member?(span, @foreign_at) end
+
+      assert error.message =~ "Zocam.ForeignCalendar"
+      assert error.message =~ "DateTime.convert!"
+    end
+
+    test "stream/3 refuses a foreign start, at the call and not at the first take", %{span: span} do
+      # Stream.resource/3 is lazy, so a check inside the start function
+      # would only fire on enumeration - far from the wrong call. The
+      # check sits in the body of stream/3, thus this raises here.
+      assert_raise ArgumentError, ~r/Zocam\.ForeignCalendar/, fn ->
+        Span.stream(span, @foreign_at, @utc)
+      end
+    end
+
+    test "the same instant on the ISO calendar still passes", %{span: span} do
+      assert Span.member?(span, ~U[2026-05-06 12:00:00Z])
+    end
+  end
 end
