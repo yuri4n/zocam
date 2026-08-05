@@ -59,6 +59,14 @@ defmodule Zocam.Intervals do
   @type both :: [from: timables(), until: timables(), left: closing(), right: closing()]
   @type interval_opts :: only_from() | only_until() | both()
 
+  # [claude-code] Typedoc added (2026-08-05); see "The four names"
+  # in the Zocam moduledoc.
+  @typedoc """
+  One concrete piece of the timeline: a plain map with exactly four
+  keys. It happens once — nothing repeats here. A `nil` endpoint
+  means "unbounded on this side" (a ray). The symbolic counterpart
+  that *does* repeat is `Zocam.Span.Arc`.
+  """
   @type interval :: %{
           from: timables() | nil,
           until: timables() | nil,
@@ -72,14 +80,28 @@ defmodule Zocam.Intervals do
 
   @type valid_interval :: interval_opts() | interval()
 
+  # [claude-code] Changed (2026-08-05): the list may be empty. The set
+  # operations produce the empty set (diff(x, x), complement of a
+  # covering set) and ground/3 can find nothing in a horizon. The old
+  # nonempty type made Dialyzer prove `intervals == []` impossible.
+  # Typedoc added the same day; see "The four names" in Zocam.
+  @typedoc """
+  A concrete *set* of pieces: the struct wraps one list of
+  `interval/0` maps, which `compress/1` keeps sorted and disjoint.
+  An empty list inside is the empty set. This is what
+  `Zocam.Span.ground/3` returns. The symbolic counterpart is
+  `t:Zocam.Span.t/0`.
+  """
   @type t :: %__MODULE__{
-          intervals: [interval(), ...]
+          intervals: [interval()]
           # step: Timex.shift_options()
         }
 
   @type interval_opt :: {:interval, interval_opts()}
 
-  @type valid_intervals :: [interval_opt() | interval(), ...] | t()
+  # [claude-code] Changed (2026-08-05): also may be empty, for the
+  # same reason - the operations accept the empty set back.
+  @type valid_intervals :: [interval_opt() | interval()] | t()
 
   @type at_least_one_valid :: valid_interval() | valid_intervals()
 
@@ -218,7 +240,7 @@ defmodule Zocam.Intervals do
       opts_ |> check_interval_opts!() |> interval_from_opts()
     end
 
-    if Keyword.has_key?(opts, :from) || Keyword.has_key?(opts, :until) do
+    if root_interval_opts?(opts) do
       # We got a keyword list of interval options, instead of multiple intervals.
       check_and_extract_opts!.(opts)
     else
@@ -238,6 +260,21 @@ defmodule Zocam.Intervals do
           check_and_extract_opts!.(o)
       end)
     end
+  end
+
+  # [claude-code] Added (2026-08-05): does the list spell ONE interval
+  # at its root (from:/until: directly in it)? The old check was
+  # Keyword.has_key?/2, whose contract admits only keyword lists -
+  # Dialyzer then proved that a plain list of interval maps (what
+  # Zocam.Span passes) "can never succeed". This scan accepts any
+  # element shape, so the contract now matches the funnel's intent.
+  @spec root_interval_opts?([term()]) :: boolean()
+  defp root_interval_opts?(opts) do
+    Enum.any?(opts, fn
+      {:from, _} -> true
+      {:until, _} -> true
+      _other -> false
+    end)
   end
 
   @doc """
@@ -382,15 +419,24 @@ defmodule Zocam.Intervals do
 
   @doc """
   Union a list of intervals into a minimal list: overlapping and
-  touching members fuse into one spanning interval (`union/1`), or
-  add one interval into an existing list (`union/2`). The result is
+  touching members fuse into one spanning interval. The result is
   not sorted; `compress/1` also sorts.
+
+  This is a fold of `union/2` over the list.
   """
   @spec union([interval()]) :: [interval()]
   def union(ivals) do
     Enum.reduce(ivals, [], &union(&2, &1))
   end
 
+  @doc """
+  Add one interval to a list that is already minimal, and keep it
+  minimal: every member that overlaps or touches `new_ival` fuses
+  with it into one spanning interval.
+
+  This is the fold step of `union/1`. Use it directly when the
+  intervals arrive one by one. The result is not sorted.
+  """
   # [claude-code] Changed: merges touching intervals too (coalesces?/2),
   # not only overlapping ones.
   @spec union([interval()], interval()) :: [interval()]
