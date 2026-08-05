@@ -1,0 +1,49 @@
+# agent: claude — release workflow for zocam.
+#
+# Trigger: push a git tag in the form vX.Y.Z (for example v0.1.0).
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The job then: checks that the tag equals the version in mix.exs,
+# runs the tests, and publishes the package to Hex.pm. `mix hex.publish`
+# also builds the ExDoc pages and uploads them to hexdocs.pm/zocam.
+#
+# Auth: the HEX_API_KEY repository secret. Create the key once with
+#   mix hex.user key generate --key-name gh-actions --permission api:write
+# and store it with: gh secret set HEX_API_KEY
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20.2"
+
+      - run: mix deps.get
+
+      # Guard: the tag must match the version in mix.exs. A mismatch
+      # stops the release before anything is published.
+      - name: Check that the tag matches mix.exs
+        run: |
+          MIX_VERSION="$(mix eval 'IO.puts(Mix.Project.config()[:version])' | tail -n 1)"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$MIX_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag v$TAG_VERSION does not match mix.exs version $MIX_VERSION" >&2
+            exit 1
+          fi
+
+      - run: mix test
+
+      - name: Publish to Hex
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        run: mix hex.publish --yes

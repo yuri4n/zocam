@@ -1,0 +1,38 @@
+# agent: claude — CI for zocam.
+#
+# Runs the test suite on every push to main and on every pull request.
+# The release workflow (release.yml) runs the same suite again before it
+# publishes, so a release can never ship code that CI did not see green.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-beam installs Erlang/OTP and Elixir. The versions here must
+      # stay equal to the ones in mise.toml, so CI and dev machines agree.
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20.2"
+
+      # Cache deps/ and _build/ between runs. The key contains the lock
+      # file hash: when a dependency changes, the cache is rebuilt.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
+
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix test
