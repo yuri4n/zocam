@@ -1,7 +1,9 @@
-# ADR-003: Overflow policy — clamp by default, skip on request
+---
+title: "ADR-003: Overflow policy — clamp by default, skip on request"
+description: "Accepted, 2026-08-04, decided by the project owner."
+---
 
-> **AI SLOP** — an AI agent wrote this page. [yuri4n](https://github.com/yuri4n), a senior
-> engineer, gave the direction and did the review. The review is human, thus errors can stay.
+[AI SLOP]{.ai-slop} an AI agent wrote this page. [yuri4n](https://github.com/yuri4n), a senior engineer, gave the direction and did the review. The review is human, thus errors can stay.
 
 ## Status
 
@@ -21,7 +23,7 @@ The forces:
 
 ### Option 1: error at ground time
 
-`Span.ground/3` raises when an instance does not exist. Caveat: this makes valid recurrences unusable. "The 31st of every month" is a reasonable rule, and it would crash eleven months after it worked in January. We reject failure as a default meaning.
+`Span.ground/3` raises when an instance does not exist. Caveat: this makes valid recurrences unusable. "The 31st of every month" is a reasonable rule, and it would crash eleven months after it worked in January. Failure is not acceptable as a default meaning.
 
 ### Option 2: always skip the missing instance
 
@@ -33,15 +35,15 @@ Clamp moves the overflow day to the month end: the 31st becomes Feb 28 (Feb 29 i
 
 ## Decision
 
-We chose option 3. The precise rules:
+Option 3 is the chosen one. The precise rules:
 
 - Every `Zocam.Point` has an `overflow` field: `:clamp` (the default) or `:skip`. `Point.new!/1` validates it.
 - Under `:clamp`, a day number that a short month cannot hold moves to the last day of that month.
 - Under `:skip`, the instance does not exist in that month. "Feb 29" with `:skip` fires only in leap years.
 - `{:day, -1}` means the last day of the month. Negative indices count from the end. This is the honest spelling of "month end", distinct from `day(31)` plus clamping.
-- An `{:nth, n, weekday}` selector that finds no match always skips. A four-Wednesday month has no 5th Wednesday, and it never falls back to the 4th. This follows RFC 5545 (iCalendar). We keep this rule deliberately, for least surprise. The rule splits by kind: a day number *measures* into the month, so it clamps. An ordinal *selects* from what exists, so it skips.
+- An `{:nth, n, weekday}` selector that finds no match always skips. A four-Wednesday month has no 5th Wednesday, and it never falls back to the 4th. This follows RFC 5545 (iCalendar). The rule stays deliberately, for least surprise. The rule splits by kind: a day number *measures* into the month, so it clamps. An ordinal *selects* from what exists, so it skips.
 - `Point.compose/2` keeps the overflow policy of the operand whose chain holds the day segment, because the policy only acts there.
-- The clamp lives in one shared denotation function, used by both `Span.member?/2` and `Span.ground/3` (see [ADR-005](adr-005-shared-denotation.md)). Otherwise "the 31st" would disagree between the two in February.
+- The clamp lives in one shared denotation function, used by both `Span.member?/2` and `Span.ground/3` (see [ADR-005](/design/adrs/005-shared-denotation)). Otherwise "the 31st" would disagree between the two in February.
 
 ```mermaid
 flowchart TD
@@ -53,7 +55,7 @@ flowchart TD
     D -- "{:nth, ...}" --> F
 ```
 
-*Figure 1 — How a day segment resolves in a month that is too short: clamp, skip, or ordinal skip. AI generated, human reviewed.*
+_Figure 1 — How a day segment resolves in a month that is too short: clamp, skip, or ordinal skip. AI generated, human reviewed._
 
 ## Consequences
 
@@ -61,15 +63,13 @@ Easy now:
 
 - Common recurrences work with no extra options. "The 31st, monthly" fires twelve times a year.
 - Literal dates stay expressible: one option flips the meaning per point.
-- `member?/2` and `ground/3` cannot drift, because both call the same denotation function. The backlog tests in `test/zocam/span_test.exs` pin this.
+- `member?/2` and `ground/3` cannot drift, because both call the same denotation function. The tests in `test/zocam/span_test.exs` pin this.
 
 Hard now:
 
-- `day(31)` under `:clamp` and `day(-1)` denote the same set. Two spellings for one meaning is a cost. We keep both because they state different intents.
+- `day(31)` under `:clamp` and `day(-1)` denote the same set. Two spellings for one meaning is a cost. Both spellings stay, because they state different intents.
 - The `overflow` field is present on every point but acts only on day numbers. Elsewhere it is inert.
 
-Open items:
-
-- The denotation function is not implemented yet; the semantics live in the backlog tests.
+Open items: none. The rules are implemented, and the tests in `test/zocam/span_test.exs` pin them.
 
 > Clamping applies only to day numbers in months. Weeks, weekdays, and times cannot overflow, because their vocabularies are fixed.

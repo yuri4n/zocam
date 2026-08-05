@@ -50,11 +50,10 @@ Zocam is implemented: every public function has a body, and the test suite is fu
 
 ## Design records
 
-The ADRs in `docs/` record the design choices:
+Each design choice has a record. The records are pages on the documentation
+site, not files in this repository: [zocam.dev/design](https://zocam.dev/design).
 
-- [ADR-001](docs/adr-001-refinement-chain.md) — the refinement-chain model for calendar points.
-- [ADR-002](docs/adr-002-set-primary-spans.md) — sets first: the Span algebra.
-- [ADR-003](docs/adr-003-overflow-policy.md) — overflow policy: clamp by default, skip on request.
-- [ADR-004](docs/adr-004-fortnight-scopes.md) — fortnights as every-k scopes.
-- [ADR-005](docs/adr-005-shared-denotation.md) — one shared denotation function, and DST.
-- [ADR-006](docs/adr-006-library-extraction.md) — the time layer as the zocam library.
+They are not part of the API reference on hexdocs, because each record is a
+website page with its own diagrams and frontmatter, which ExDoc would print as
+raw text. This reference documents the code; the site documents the decisions
+behind it.

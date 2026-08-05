@@ -1,7 +1,9 @@
-# ADR-005: One denotation function, and what DST does to it
+---
+title: "ADR-005: One denotation function, and what DST does to it"
+description: "Accepted, 2026-08-04, decided by the project owner."
+---
 
-> **AI SLOP** — an AI agent wrote this page. [yuri4n](https://github.com/yuri4n), a senior
-> engineer, gave the direction and did the review. The review is human, thus errors can stay.
+[AI SLOP]{.ai-slop} an AI agent wrote this page. [yuri4n](https://github.com/yuri4n), a senior engineer, gave the direction and did the review. The review is human, thus errors can stay.
 
 ## Status
 
@@ -14,21 +16,21 @@ Two operations answer the same question: "what does this point mean on the real 
 - `Span.member?/2` asks it for one instant. It is symbolic: no horizon, no enumeration.
 - `Span.ground/3` asks it for a whole horizon. It enumerates into the linear kernel.
 
-If the two are two implementations, their answers can drift. This was a real defect class, caught in review: "the 31st" in February. Under `:clamp` the point fires on Feb 28 (see [ADR-003](adr-003-overflow-policy.md)). One implementation clamped; the other did not. The same instant got two different answers from one span.
+If the two are two implementations, their answers can drift. This was a real defect class, caught in review: "the 31st" in February. Under `:clamp` the point fires on Feb 28 (see [ADR-003](/design/adrs/003-overflow-policy)). One implementation clamped; the other did not. The same instant got two different answers from one span.
 
 The force behind the drift is duplication. Clamping, ordinal skipping, and closings are subtle rules. Two copies of a subtle rule always separate over time.
 
 ## Options
 
-**Option A: two independent implementations.** Each query optimizes its own path. Caveat: this is the drift we already hit. Nothing forces the copies to agree.
+**Option A: two independent implementations.** Each query optimizes its own path. Caveat: this is the drift that already happened. Nothing forces the copies to agree.
 
 **Option B: define `member?` as a call to `ground` over a one-instant horizon.** Correct by construction. Caveat: it turns a symbolic question into an enumeration. `nth` grounding widens to whole cycle instances first, so even a one-instant probe can enumerate a full month. The cost model becomes wrong for the common query.
 
-**Option C: a shared kernel.** One clamp-aware denotation function holds all the rules. `member?/2` and `ground/3` are thin interpreters over it. The pattern is a *single source of truth*: two query interfaces, one shared kernel. This extends the interpreter pattern from [ADR-002](adr-002-set-primary-spans.md): the span tree is the free algebra, and both interpreters now share their semantics.
+**Option C: a shared kernel.** One clamp-aware denotation function holds all the rules. `member?/2` and `ground/3` are thin interpreters over it. The pattern is a *single source of truth*: two query interfaces, one shared kernel. This extends the interpreter pattern from [ADR-002](/design/adrs/002-set-primary-spans): the span tree is the free algebra, and both interpreters now share their semantics.
 
 ## Decision
 
-We chose option C. There is one denotation function. `member?/2` and `ground/3` both call it. Clamping, ordinal skipping, and closings behave identically in both.
+Option C is the chosen one. There is one denotation function. `member?/2` and `ground/3` both call it. Clamping, ordinal skipping, and closings behave identically in both.
 
 ```mermaid
 graph LR
@@ -38,7 +40,7 @@ graph LR
   D -- "intervals on<br/>the timeline" --> K["Zocam.Intervals<br/>(linear kernel)"]
 ```
 
-*Figure 1 — Both queries pass through one denotation function into the linear kernel. AI generated, human reviewed.*
+_Figure 1 — Both queries pass through one denotation function into the linear kernel. AI generated, human reviewed._
 
 A property test pins the law, so the sharing cannot silently break:
 
@@ -65,4 +67,4 @@ The 2026 fixtures in `test/zocam/span_test.exs` pin these real dates. All calend
 - `member?/2` cannot take a shortcut that the shared function does not offer. Every optimization must keep the law.
 - The two queries answer at different levels: `member?/2` reads the wall clock of the given `DateTime`, and `ground/3` maps wall time to the timeline. The law still holds through DST. A gap instant has no `DateTime` in that zone, and both fall-back instants map to wall times inside the window.
 
-**Open items:** the law holds in the current test suite; a generated property test is still a good next step. `stream/3` must keep using the same denotation.
+**Open items:** the law holds in the current test suite; a generated property test is still a good next step. `stream/3` keeps using the same denotation today, because it grounds chunk by chunk with `ground/3`. A later change must keep that path.

@@ -13,15 +13,19 @@ Read the records in order. Each one builds on the ones before it: ADR-001 fixes 
 
 | ADR | Decision in one line |
 | --- | --- |
-| [ADR-001](/design/adr-001-refinement-chain) | A calendar point is a scope plus a refinement chain |
-| [ADR-002](/design/adr-002-set-primary-spans) | Sets are primary; Span is a recursive set algebra over points and arcs |
-| [ADR-003](/design/adr-003-overflow-policy) | Overflow clamps by default; `:skip` is an explicit override |
-| [ADR-004](/design/adr-004-fortnight-scopes) | Fortnights are `{:every, k, cycle, anchor}` scopes with subsequence semantics |
-| [ADR-005](/design/adr-005-shared-denotation) | `member?` and `ground` share one denotation function; DST rules pinned |
-| [ADR-006](/design/adr-006-library-extraction) | The time layer is its own library, extracted from the s7r app |
+| [ADR-001](/design/adrs/001-refinement-chain) | A calendar point is a scope plus a refinement chain |
+| [ADR-002](/design/adrs/002-set-primary-spans) | Sets are primary; Span is a recursive set algebra over points and arcs |
+| [ADR-003](/design/adrs/003-overflow-policy) | Overflow clamps by default; `:skip` is an explicit override |
+| [ADR-004](/design/adrs/004-fortnight-scopes) | Fortnights are `{:every, k, cycle, anchor}` scopes with subsequence semantics |
+| [ADR-005](/design/adrs/005-shared-denotation) | `member?` and `ground` share one denotation function; DST rules pinned |
+| [ADR-006](/design/adrs/006-standalone-library) | Zocam is a standalone repository that releases to Hex |
 
 *Figure 1 — The ADR timetable: one row per record, with the decision in one line. AI generated, human reviewed.*
 
 ::note
-The ADR sources live as plain markdown in `docs/adr-*.md` in the repository — they are also the ExDoc extras on hexdocs. The documentation pipeline generates these pages from those files. To change an ADR, edit it there, not here.
+These records are hand-written pages. They live in the zocam repository at `docs/content/2.design/adrs/`, and nothing generates them. To change an ADR, edit the page itself. They are not ExDoc extras: hexdocs carries the API reference only.
+::
+
+::note
+This series records zocam's side of each decision. When a decision also binds the s7r application, s7r keeps its own record, numbered from 001 in its own repository. ADR-006 is such a case: its consumer half is s7r ADR-001.
 ::
