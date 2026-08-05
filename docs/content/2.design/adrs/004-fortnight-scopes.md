@@ -1,7 +1,9 @@
-# ADR-004: Fortnights as every-k scopes
+---
+title: "ADR-004: Fortnights as every-k scopes"
+description: "Accepted, 2026-08-04, decided by the project owner."
+---
 
-> **AI SLOP** — an AI agent wrote this page. [yuri4n](https://github.com/yuri4n), a senior
-> engineer, gave the direction and did the review. The review is human, thus errors can stay.
+[AI SLOP]{.ai-slop} an AI agent wrote this page. [yuri4n](https://github.com/yuri4n), a senior engineer, gave the direction and did the review. The review is human, thus errors can stay.
 
 ## Status
 
@@ -18,12 +20,12 @@ Payroll and rota cases need fortnights immediately. This feature is part of v1, 
 ## Options
 
 1. **A dedicated `:fortnight` cycle unit.** Caveat: it does not generalize. "Every third week" and "every second month" would each need a new unit. Each unit would also need its own calendar arithmetic. This is an ad-hoc design.
-2. **A step inside arcs.** An arc step samples cells *inside one instance* (see [ADR-002](adr-002-set-primary-spans.md)). Caveat: a step cannot thin the *stream of instances* itself. The rhythm lives one level higher than the step, so this is the wrong layer.
+2. **A step inside arcs.** An arc step samples cells *inside one instance* (see [ADR-002](/design/adrs/002-set-primary-spans)). Caveat: a step cannot thin the *stream of instances* itself. The rhythm lives one level higher than the step, so this is the wrong layer.
 3. **A scope wrapper `{:every, k, cycle, anchor}`.** This is the decorator pattern: the wrapper changes the rhythm of a base cycle and keeps everything else. Caveat: the anchor adds one identity-like field, and the API must protect it.
 
 ## Decision
 
-We chose option 3, with **subsequence semantics**. The scope `{:every, k, cycle, anchor}` keeps every k-th instance of the base cycle, counted from the instance that contains the anchor date. Each kept instance keeps the size of the base cycle: a fortnight point still denotes week-sized things, not 14-day things.
+Option 3 is the chosen one, with **subsequence semantics**. The scope `{:every, k, cycle, anchor}` keeps every k-th instance of the base cycle, counted from the instance that contains the anchor date. Each kept instance keeps the size of the base cycle: a fortnight point still denotes week-sized things, not 14-day things.
 
 ```mermaid
 flowchart LR
@@ -33,7 +35,7 @@ flowchart LR
     style W3 stroke-width:3px
 ```
 
-*Figure 1 — Subsequence semantics: a fortnight keeps every second week, counted from the anchor. AI generated, human reviewed.*
+_Figure 1 — Subsequence semantics: a fortnight keeps every second week, counted from the anchor. AI generated, human reviewed._
 
 The precise rules:
 
@@ -54,10 +56,10 @@ The precise rules:
 
 **Hard:**
 
-- The phase check is not in `Point`. `Zocam.Span.of/1` and `ground/3` must count instances from the anchor. A backlog test pins this: the fortnightly Wednesday alternates from Jan 7, 2026.
+- The phase check is not in `Point`. `Zocam.Span.of/1` and `ground/3` must count instances from the anchor. A test pins this: the fortnightly Wednesday alternates from Jan 7, 2026.
 - Users must restate a rhythm to change it. This is a small cost, chosen on purpose.
 
-**Open items:**
+**Open items:** none. The rules are implemented:
 
-- Implement the phase arithmetic in the `Span` interpreters (`member?/2` and `ground/3` must agree).
-- Decide how `stream/3` finds the first kept instance after an arbitrary start instant.
+- The phase arithmetic lives in the `Span` interpreters. `base_cycle/1` folds the wrapper away to its base cycle, and `selected_instance?/3` keeps an instance when its index is a whole multiple of `k` away from the instance that holds the anchor. `member?/2` and `ground/3` both pass through that filter, so they agree.
+- `stream/3` needs no rule of its own. It grounds chunk by chunk with `ground/3`, so the same filter selects the kept instances after any start instant.
