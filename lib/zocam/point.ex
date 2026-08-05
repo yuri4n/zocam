@@ -62,9 +62,21 @@ defmodule Zocam.Point do
 
   This module is pure: no timezone, no Timex. The calendar meets the
   real timeline only in `Zocam.Span.ground/3`.
+
+  ## One calendar
+
+  A point stores two standard-library values that carry a calendar:
+  the `%Time{}` of a `:time` segment, and the `%Date{}` anchor of an
+  `{:every, k, cycle, anchor}` scope. Both must be on `Calendar.ISO`,
+  because `month_number/1`, `weekday_number/1`, and the cell
+  arithmetic in `Zocam.Span` all read ISO numbers. A value on another
+  calendar is refused by `new!/1` with an error that names the
+  calendar. See `Zocam.ISO`.
   """
 
   use TypedStruct
+
+  alias Zocam.ISO
 
   # [claude-code] Calendar vocabulary. Full-name atoms, defined HERE:
   # since timables/0 narrowed (2026-08-04), the linear kernel is
@@ -205,30 +217,66 @@ defmodule Zocam.Point do
 
   # [claude-code] Per-unit constructors. Each constructor pairs a
   # unit value with the smallest scope in which that value repeats.
-  # The success clause spells the vocabulary in its guard; the
-  # fallback clause turns a wrong value into a teaching ArgumentError
-  # instead of a FunctionClauseError. Trade-off: the fallback makes
-  # the function accept every term, so the Elixir type checker does
-  # NOT flag Point.month(:wednesday) at the call site — it flags only
-  # wrong-shaped arguments (as in compose/2 with a non-Point). We
-  # chose the teaching runtime error over call-site flagging; drop
-  # the fallback clauses to flip that choice. The runtime authority
-  # stays validate_value!/2 inside new!/1.
+  # Each one is guard-only: the guard spells the vocabulary, and a
+  # value outside it matches no clause.
+  #
+  # DECIDED 2026-08-05 (the user chose this; earlier versions had a
+  # fallback clause on each constructor that raised a taught
+  # ArgumentError). Guard-only keeps the functions PARTIAL, and that
+  # is exactly what buys call-site detection. On Elixir 1.20.2,
+  # `Point.month(:wednesday)` produces at COMPILE time:
+  #
+  #     warning: incompatible types given to Zocam.Point.month/1
+  #       but expected one of:
+  #         :april or :august or :december or ... (all twelve)
+  #
+  # A fallback would silence that, because the checker can only warn
+  # about a call that no clause accepts. The two cannot both be had.
+  # The price is the runtime error: a wrong value that reaches run
+  # time raises FunctionClauseError, not a taught message.
+  #
+  # That price is small because it is paid only by values the checker
+  # cannot see, and those go through new!/1, where validate_value!/2
+  # is still the authority and still teaches. For the same reason the
+  # converters further down (month_number/1 and friends) DO keep
+  # fallback clauses: they take run-time values, never literals.
+  #
+  # CAVEAT, measured 2026-08-05: the trade is only good where the
+  # guard names a VOCABULARY. Elixir's set-theoretic types carry
+  # `integer()`, not `1..53`, so a guard that names a RANGE buys
+  # nothing. Of eleven probe calls the checker flagged five and was
+  # silent on six:
+  #
+  #     flagged  month(:wednesday) weekday(:may) year(:nope)
+  #              time(:noon) day({:nth, 1, :may})
+  #     SILENT   week(54) week(0) day(0) day(32) day(-99)
+  #              day({:nth, 6, :wednesday})
+  #
+  # So `week/1`, the numeric forms of `day/1`, and the ordinal COUNT
+  # in `{:nth, n, wd}` lost the taught ArgumentError and gained no
+  # warning in exchange: a plain regression for those three. Only the
+  # atom and struct guards pay for themselves. Whether to give those
+  # three their fallback back is open work, not a settled decision.
+  #
+  # Two smaller facts from the same measurement:
+  #   - The checker reports only the FIRST bad call in a function
+  #     body. Six deliberate misuses in one test function print one
+  #     warning, not six.
+  #   - `mix compile --warnings-as-errors` covers lib/ only, so the
+  #     warning the tests now emit does not break CI. Adding the flag
+  #     to the test step would break it.
 
   @doc "The year `n`: scope `:absolute`, grain class `:year`."
   @spec year(integer()) :: t()
   def year(n) when is_integer(n), do: new!(scope: :absolute, chain: [year: n])
-  def year(other), do: bad_value!(:year, other)
 
   @doc "A month of the year: scope `:year`, grain class `:month`."
   @spec month(month()) :: t()
   def month(m) when m in @months, do: new!(scope: :year, chain: [month: m])
-  def month(other), do: bad_value!(:month, other)
 
   @doc "An ISO week of the year (1..53): scope `:year`, grain class `:week`."
   @spec week(1..53) :: t()
   def week(n) when n in 1..53, do: new!(scope: :year, chain: [week: n])
-  def week(other), do: bad_value!(:week, other)
 
   @doc """
   A day of the month: scope `:month`, grain class `:day`.
@@ -244,17 +292,13 @@ defmodule Zocam.Point do
     new!(scope: :month, chain: [day: d])
   end
 
-  def day(other), do: bad_value!(:day, other)
-
   @doc "A day of the week: scope `:week`, grain class `:day`."
   @spec weekday(weekday()) :: t()
   def weekday(wd) when wd in @weekdays, do: new!(scope: :week, chain: [weekday: wd])
-  def weekday(other), do: bad_value!(:weekday, other)
 
   @doc "A time of the day: scope `:day`, grain class `:time`."
   @spec time(Time.t()) :: t()
   def time(%Time{} = t), do: new!(scope: :day, chain: [time: t])
-  def time(other), do: bad_value!(:time, other)
 
   # [claude-code]
   @doc """
@@ -353,7 +397,14 @@ defmodule Zocam.Point do
       when is_integer(k) and k > 0 do
     case scope do
       cycle when cycle in @cycles ->
-        %{point | scope: {:every, k, cycle, anchor}}
+        # [claude-code] Changed 2026-08-05 (Linear YUR-57). every/3
+        # writes the scope field directly, so it never passes through
+        # new!/1. Build the scope first and hand it to the one
+        # authority: the anchor calendar is then checked on this path
+        # and on the new!/1 path by the same clause, never by two.
+        new_scope = {:every, k, cycle, anchor}
+        validate_scope!(new_scope)
+        %{point | scope: new_scope}
 
       :absolute ->
         raise ArgumentError,
@@ -527,9 +578,13 @@ defmodule Zocam.Point do
   defp validate_scope!(:absolute), do: :ok
   defp validate_scope!(cycle) when cycle in @cycles, do: :ok
 
-  defp validate_scope!({:every, k, cycle, %Date{}})
+  # [claude-code] Changed 2026-08-05 (Linear YUR-57). The `%Date{}`
+  # pattern matches the SHAPE of a date, on any calendar. The anchor
+  # feeds instance_index/2 in Zocam.Span, which reads its year, month,
+  # and day as ISO numbers, so the shape alone is not enough.
+  defp validate_scope!({:every, k, cycle, %Date{} = anchor})
        when is_integer(k) and k > 0 and cycle in @cycles,
-       do: :ok
+       do: ISO.check!(anchor, "the {:every, k, cycle, anchor} scope anchor")
 
   defp validate_scope!(other) do
     raise ArgumentError,
@@ -576,6 +631,15 @@ defmodule Zocam.Point do
 
   # [claude-code] Vocabulary checks per unit: the runtime authority.
   # The constructor guards mirror these clauses for the type checker.
+  #
+  # The `:time` clause carries the calendar check (added 2026-08-05,
+  # Linear YUR-57) and the constructor guard does NOT mirror it. That
+  # asymmetry is on purpose. A guard would make `time/1` reject a
+  # foreign calendar with a FunctionClauseError, which teaches nothing,
+  # and it would buy no compile-time warning in exchange: the checker
+  # reads `%Time{}` as a shape and does not track which module sits in
+  # the `:calendar` field. So the check lives here alone, where every
+  # path already arrives and where the error can teach.
   @spec validate_value!(unit(), term()) :: :ok
   defp validate_value!(:year, n) when is_integer(n), do: :ok
   defp validate_value!(:month, m) when m in @months, do: :ok
@@ -586,7 +650,7 @@ defmodule Zocam.Point do
     do: :ok
 
   defp validate_value!(:weekday, wd) when wd in @weekdays, do: :ok
-  defp validate_value!(:time, %Time{}), do: :ok
+  defp validate_value!(:time, %Time{} = t), do: ISO.check!(t, "the :time segment")
   defp validate_value!(unit, value), do: bad_value!(unit, value)
 
   # [claude-code] One error text for a wrong unit value. The

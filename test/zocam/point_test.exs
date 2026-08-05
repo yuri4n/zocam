@@ -37,13 +37,28 @@ defmodule Zocam.PointTest do
       assert Point.day({:nth, 1, :wednesday}).chain == [day: {:nth, 1, :wednesday}]
     end
 
+    # [claude-code] Changed 2026-08-05: these expected ArgumentError, from
+    # fallback clauses that no longer exist. The constructors are guard-only
+    # on purpose, so a value outside the vocabulary matches no clause. That
+    # is what buys the compile-time warning: the type checker can only flag
+    # a call that no clause accepts. See the note above the constructors.
     test "constructors reject values outside their vocabulary" do
-      assert_raise ArgumentError, fn -> Point.month(:wednesday) end
-      assert_raise ArgumentError, fn -> Point.weekday(:may) end
-      assert_raise ArgumentError, fn -> Point.day(0) end
-      assert_raise ArgumentError, fn -> Point.day(32) end
-      assert_raise ArgumentError, fn -> Point.week(54) end
-      assert_raise ArgumentError, fn -> Point.day({:nth, 6, :wednesday}) end
+      assert_raise FunctionClauseError, fn -> Point.month(:wednesday) end
+      assert_raise FunctionClauseError, fn -> Point.weekday(:may) end
+      assert_raise FunctionClauseError, fn -> Point.day(0) end
+      assert_raise FunctionClauseError, fn -> Point.day(32) end
+      assert_raise FunctionClauseError, fn -> Point.week(54) end
+      assert_raise FunctionClauseError, fn -> Point.day({:nth, 6, :wednesday}) end
+    end
+
+    # [claude-code] The other half of the same decision: values that reach a
+    # constructor through new!/1 are computed, not literals, so the checker
+    # cannot see them. There validate_value!/2 stays the authority and still
+    # raises the taught ArgumentError.
+    test "new!/1 still teaches when a computed value is outside the vocabulary" do
+      assert_raise ArgumentError, fn ->
+        Point.new!(scope: :year, chain: [month: :wednesday])
+      end
     end
 
     test "new!/1 rejects a chain that skips a level under its scope" do
@@ -171,6 +186,58 @@ defmodule Zocam.PointTest do
       assert_raise ArgumentError, fn ->
         Point.every(fortnightly, 3, ~D[2026-02-04])
       end
+    end
+  end
+
+  # [claude-code] Added 2026-08-05 for Linear YUR-57. A point stores two
+  # stdlib values that carry a calendar: the `:time` segment and the
+  # `every/3` anchor. Every month, weekday, and day number in this
+  # library is read as an ISO number, so a value on another calendar
+  # validated and then meant something else, with no crash and no
+  # warning. Both entry paths (the constructor and `new!/1`) now reach
+  # the same check, so both raise the same taught error.
+  describe "the ISO calendar" do
+    alias Zocam.ForeignCalendar
+
+    @foreign_time %{~T[09:00:00] | calendar: ForeignCalendar}
+    @foreign_date %{~D[2026-05-15] | calendar: ForeignCalendar}
+
+    test "time/1 refuses a %Time{} on another calendar" do
+      error = assert_raise ArgumentError, fn -> Point.time(@foreign_time) end
+
+      assert error.message =~ "Zocam.ForeignCalendar"
+      assert error.message =~ "Time.convert!"
+    end
+
+    test "new!/1 refuses a foreign %Time{} in the chain" do
+      # The constructors are guard-only, so this is the path a computed
+      # value takes. It must teach the same lesson.
+      assert_raise ArgumentError, ~r/Zocam\.ForeignCalendar/, fn ->
+        Point.new!(scope: :day, chain: [time: @foreign_time])
+      end
+    end
+
+    test "every/3 refuses a foreign %Date{} anchor" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Point.every(Point.weekday(:monday), 2, @foreign_date)
+        end
+
+      assert error.message =~ "Zocam.ForeignCalendar"
+      assert error.message =~ "Date.convert!"
+    end
+
+    test "new!/1 refuses a foreign anchor inside an {:every, ...} scope" do
+      assert_raise ArgumentError, ~r/Zocam\.ForeignCalendar/, fn ->
+        Point.new!(scope: {:every, 2, :week, @foreign_date}, chain: [weekday: :monday])
+      end
+    end
+
+    test "the ISO values that mean the same thing still pass" do
+      assert Point.time(~T[09:00:00]).chain == [time: ~T[09:00:00]]
+
+      assert Point.every(Point.weekday(:monday), 2, ~D[2026-05-15]).scope ==
+               {:every, 2, :week, ~D[2026-05-15]}
     end
   end
 
