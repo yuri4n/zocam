@@ -1,0 +1,124 @@
+{
+  "Zocam.ISO": {
+    "slug": "zocam-iso",
+    "types": {
+      "calendared": "calendared"
+    },
+    "functions": {
+      "check!": "check"
+    }
+  },
+  "Zocam.Intervals": {
+    "slug": "zocam-intervals",
+    "types": {
+      "at_least_one_valid": "at_least_one_valid",
+      "both": "both",
+      "closing": "closing",
+      "interval": "interval",
+      "interval_opt": "interval_opt",
+      "interval_opts": "interval_opts",
+      "new_opts": "new_opts",
+      "only_from": "only_from",
+      "only_until": "only_until",
+      "t": "t",
+      "timables": "timables",
+      "valid_interval": "valid_interval",
+      "valid_intervals": "valid_intervals"
+    },
+    "functions": {
+      "check_and_extract_as_list!": "check_and_extract_as_list",
+      "check_interval_opts!": "check_interval_opts",
+      "check_new_opts!": "check_new_opts",
+      "complement": "complement",
+      "completely_before?": "completely_before",
+      "compress": "compress",
+      "diff": "diff",
+      "intersect": "intersect",
+      "interval_from_opts": "interval_from_opts",
+      "is_interval": "is_interval",
+      "new!": "new",
+      "overlaps?": "overlaps",
+      "union": "union"
+    }
+  },
+  "Zocam.Point.ComposeError": {
+    "slug": "zocam-point-composeerror",
+    "types": {
+      "reason": "reason",
+      "t": "t"
+    },
+    "functions": {}
+  },
+  "Zocam.Point": {
+    "slug": "zocam-point",
+    "types": {
+      "chain": "chain",
+      "cycle": "cycle",
+      "day_index": "day_index",
+      "grain_class": "grain_class",
+      "month": "month",
+      "nth_weekday": "nth_weekday",
+      "overflow": "overflow",
+      "scope": "scope",
+      "segment": "segment",
+      "t": "t",
+      "unit": "unit",
+      "weekday": "weekday"
+    },
+    "functions": {
+      "compose": "compose",
+      "compose!": "compose-1",
+      "day": "day",
+      "every": "every",
+      "grain_class": "grain_class-1",
+      "month": "month-1",
+      "month_atom": "month_atom",
+      "month_number": "month_number",
+      "new!": "new",
+      "scope_class": "scope_class",
+      "time": "time",
+      "week": "week",
+      "weekday": "weekday-1",
+      "weekday_atom": "weekday_atom",
+      "weekday_number": "weekday_number",
+      "year": "year"
+    }
+  },
+  "Zocam.Span.Arc": {
+    "slug": "zocam-span-arc",
+    "types": {
+      "t": "t"
+    },
+    "functions": {}
+  },
+  "Zocam.Span": {
+    "slug": "zocam-span",
+    "types": {
+      "n": "n",
+      "step": "step",
+      "t": "t",
+      "time_unit": "time_unit"
+    },
+    "functions": {
+      "absolute!": "absolute",
+      "arc!": "arc",
+      "complement": "complement",
+      "diff": "diff",
+      "empty": "empty",
+      "empty?": "empty-1",
+      "ground": "ground",
+      "intersection": "intersection",
+      "member?": "member",
+      "nth": "nth",
+      "of": "of",
+      "stream": "stream",
+      "union": "union",
+      "universe": "universe"
+    }
+  },
+  "Zocam": {
+    "slug": "zocam",
+    "types": {},
+    "functions": {}
+  }
+}

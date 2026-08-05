@@ -19,8 +19,9 @@
 // inside a ``` fence?". Lines inside fences are never headings. Indented
 // code blocks need no state: their lines never start at column zero.
 //
-// The same script also turns the ADR sources (the adr-*.md files that sit
-// next to this app, at docs/adr-*.md) into content/2.design pages.
+// This script has ONE job: the API reference. The design records under
+// content/2.design/adrs/ are hand-written sources that are committed as
+// they are. No step generates them.
 
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -52,9 +53,16 @@ export function parseModuleDoc(raw) {
     }
   }
   const [head, ...rest] = sections
+  // agent: claude — changed: ExDoc writes the module source link as the
+  // first moduledoc line, in the form "[🔗](https://…/file.ex#L7)". We lift
+  // it out into data. Before this change it leaked into the summary and the
+  // page body, where it rendered as raw text.
+  const rawDoc = head.lines.join('\n').trim()
+  const src = rawDoc.match(/^\[🔗\]\((\S+)\)\s*/)
   return {
     moduleName: head.name,
-    moduleDoc: head.lines.join('\n').trim(),
+    sourceUrl: src ? src[1] : null,
+    moduleDoc: src ? rawDoc.slice(src[0].length).trim() : rawDoc,
     entries: rest.map((s) => ({ name: s.name, body: s.lines.join('\n').trim() })),
   }
 }
@@ -87,7 +95,7 @@ export function extractSummary(moduleDoc) {
 }
 
 // agent: claude — assemble one Nuxt Content page from a parsed module.
-export function renderPage({ moduleName, moduleDoc, entries }) {
+export function renderPage({ moduleName, sourceUrl, moduleDoc, entries }) {
   const grouped = { type: [], function: [] }
   for (const entry of entries) grouped[classifyEntry(entry)].push(entry)
 
@@ -104,12 +112,59 @@ export function renderPage({ moduleName, moduleDoc, entries }) {
     '---',
   ].join('\n')
 
+  // agent: claude — the lifted source link renders as a small chip under
+  // the stamp; app.css styles the .source-link class per skin.
+  const sourceLine = sourceUrl ? `\n\n[Source on GitHub ↗](${sourceUrl}){.source-link}` : ''
+
   return (
-    `${frontmatter}\n\n${AI_SLOP_STAMP}\n\n${moduleDoc}\n` +
+    `${frontmatter}\n\n${AI_SLOP_STAMP}${sourceLine}\n\n${moduleDoc}\n` +
     section('Types', grouped.type) +
     section('Functions', grouped.function) +
     '\n'
   )
+}
+
+// agent: claude — the anchor id that the site gives a heading at run time.
+// Nuxt Content uses github-slugger: lowercase, punctuation dropped, spaces
+// become dashes, and a repeated id gets "-1", "-2", … . computeAnchors
+// emulates that here, at build time, so generated links can point at real
+// anchors. This is the same "adapter" idea as the rest of this file: we
+// re-create the other system's rule instead of asking it.
+export function computeAnchors(markdown) {
+  const seen = new Map()
+  const anchors = [] // [{ level, text, id }]
+  let inFence = false
+  for (const line of markdown.split('\n')) {
+    if (line.startsWith('```')) {
+      inFence = !inFence
+      continue
+    }
+    const m = !inFence && line.match(/^(#{1,6})\s+(.+)$/)
+    if (!m) continue
+    const text = m[2].replaceAll('`', '').trim()
+    const base = text.toLowerCase().replace(/[^\p{L}\p{N}_\- ]+/gu, '').replace(/\s+/g, '-')
+    const n = seen.get(base) ?? 0
+    seen.set(base, n + 1)
+    anchors.push({ level: m[1].length, text, id: n === 0 ? base : `${base}-${n}` })
+  }
+  return anchors
+}
+
+// agent: claude — one manifest row per module: the page slug plus the
+// anchor of every type and every function heading. The site components
+// read the merged JSON (app/assets/api-manifest.json) to turn code
+// references such as `Zocam.Span.t()` into links.
+export function moduleManifest(parsed) {
+  const manifest = { slug: moduleSlug(parsed.moduleName), types: {}, functions: {} }
+  let section = null
+  for (const a of computeAnchors(renderPage(parsed))) {
+    if (a.level === 2) {
+      section = a.text === 'Types' ? 'types' : a.text === 'Functions' ? 'functions' : null
+    } else if (a.level === 3 && section && !(a.text in manifest[section])) {
+      manifest[section][a.text] = a.id
+    }
+  }
+  return manifest
 }
 
 // agent: claude — the public provenance stamp, in the canonical wording that
@@ -145,62 +200,9 @@ export function renderIndex(modules) {
   ].join('\n')
 }
 
-// agent: claude — turn one plain-markdown ADR (an ExDoc extra from
-// docs/adr-*.md) into a site page. The transform is small on purpose: the
-// ADR file is the single source of truth, the site only reframes it.
-export function renderAdrPage(raw) {
-  const lines = raw.split('\n')
-  let title = ''
-  const body = []
-  let chipLine = null
-  let inNotice = false
-  for (const line of lines) {
-    const h1 = line.match(/^# (.+)$/)
-    if (h1 && !title) {
-      title = h1[1].trim()
-      continue
-    }
-    // The canonical notice is a blockquote that can wrap over lines.
-    // Collect all of it, then re-emit it as one chip line for the site.
-    if (!chipLine && /^> \*\*AI SLOP\*\*/.test(line)) {
-      inNotice = true
-      chipLine = line.replace(/^> \*\*AI SLOP\*\*\s*—?\s*/, '[AI SLOP]{.ai-slop} ')
-      continue
-    }
-    if (inNotice) {
-      if (/^> ?/.test(line)) {
-        chipLine += ' ' + line.replace(/^> ?/, '').trim()
-        continue
-      }
-      inNotice = false
-    }
-    body.push(line)
-  }
-  // Description: the first plain paragraph line (not a heading, quote,
-  // fence, or table), unwrapped and stripped of backticks.
-  const plain = body.find((l) => l.trim() && !/^(#|>|```|\||-|\*)/.test(l.trim()))
-  const description = (plain ?? '').replaceAll('`', '').trim()
-  // ADR sources cross-link each other in the ExDoc form (adr-00X-....md,
-  // which ExDoc rewrites to .html). The site serves them under /design/.
-  const sitedBody = body.join('\n').replace(/\]\((adr-[\w-]+)\.md\)/g, '](/design/$1)')
-  return [
-    '---',
-    `title: ${JSON.stringify(title)}`,
-    `description: ${JSON.stringify(description)}`,
-    '---',
-    '',
-    chipLine ?? AI_SLOP_STAMP,
-    '',
-    sitedBody.trim(),
-    '',
-  ].join('\n')
-}
-
-// agent: claude — the imperative shell. Two jobs:
-//   1. Turn the ExDoc markdown of the library (repo root `doc/`, the
-//      output of `mix docs`) into content/3.api pages.
-//   2. Turn the ADR sources (docs/adr-*.md, next to this app) into
-//      content/2.design pages.
+// agent: claude — the imperative shell. One job: turn the ExDoc markdown of
+// the library (repo root `doc/`, the output of `mix docs`) into
+// content/3.api pages.
 // When the ExDoc output is missing (for example on a build machine without
 // Elixir, such as Vercel), the existing generated pages are kept instead
 // of failing.
@@ -208,7 +210,6 @@ function main() {
   const docsRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
   const repoRoot = join(docsRoot, '..')
 
-  // --- API reference ------------------------------------------------------
   const exdocDir = join(repoRoot, 'doc')
   const pattern = /^Zocam(\..+)?\.md$/
   const apiDir = join(docsRoot, 'content', '3.api')
@@ -222,34 +223,25 @@ function main() {
     rmSync(apiDir, { recursive: true, force: true })
     mkdirSync(apiDir, { recursive: true })
     const modules = []
+    const manifest = {}
     const files = readdirSync(exdocDir).filter((f) => pattern.test(f)).sort()
     for (const file of files) {
       const parsed = parseModuleDoc(readFileSync(join(exdocDir, file), 'utf8'))
       modules.push({ moduleName: parsed.moduleName, summary: extractSummary(parsed.moduleDoc) })
+      manifest[parsed.moduleName] = moduleManifest(parsed)
       writeFileSync(join(apiDir, `${moduleSlug(parsed.moduleName)}.md`), renderPage(parsed))
     }
     modules.sort((a, b) => a.moduleName.localeCompare(b.moduleName))
     writeFileSync(join(apiDir, 'index.md'), renderIndex(modules))
     writeFileSync(join(apiDir, '.navigation.yml'), 'title: "API Reference"\nicon: i-lucide-braces\n')
+    // agent: claude — the API manifest feeds the link components (see
+    // app/utils/api-links.ts). It is committed, like content/3.api, so a
+    // build machine without Elixir keeps the last generated version.
+    const assetsDir = join(docsRoot, 'app', 'assets')
+    mkdirSync(assetsDir, { recursive: true })
+    writeFileSync(join(assetsDir, 'api-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
     console.log(`[ingest-exdoc] wrote ${modules.length} module pages to content/3.api/`)
   }
-
-  // --- Design pages (ADRs) ------------------------------------------------
-  // The ADR sources sit at the root of this docs app (docs/adr-*.md), so
-  // the README links and the ExDoc extras in mix.exs keep working.
-  const adrSrcDir = docsRoot
-  const designDir = join(docsRoot, 'content', '2.design')
-  const adrFiles = readdirSync(adrSrcDir).filter((f) => /^adr-\d+.*\.md$/.test(f)).sort()
-  mkdirSync(designDir, { recursive: true })
-  // Remove only the generated ADR pages; index.md is written by hand.
-  for (const f of readdirSync(designDir)) {
-    if (/\.adr-.*\.md$/.test(f)) rmSync(join(designDir, f))
-  }
-  adrFiles.forEach((file, i) => {
-    const page = renderAdrPage(readFileSync(join(adrSrcDir, file), 'utf8'))
-    writeFileSync(join(designDir, `${i + 1}.${file}`), page)
-  })
-  console.log(`[ingest-exdoc] wrote ${adrFiles.length} ADR pages to content/2.design/`)
 }
 
 // agent: claude — run main only when executed as a script, not when imported
