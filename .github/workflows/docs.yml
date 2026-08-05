@@ -1,0 +1,66 @@
+# agent: claude — the check for the zocam docs site.
+#
+# The rule (AGENTS, "Releases"): work reaches the site through a pull
+# request. This workflow is the PROOF; it is not the deployer.
+#
+#   pull request that touches docs/  →  test + build   (proof)
+#   merge (push) to main             →  test + build   (proof)
+#
+# Vercel deploys. Its GitHub integration watches this repository, builds
+# from the `docs` root directory, and publishes. A push therefore starts
+# two machines: this one, which can say "no", and Vercel's, which
+# publishes. They must build the same thing, thus docs/vercel.json pins
+# the build command to the same `pnpm generate` that runs here.
+#
+# Why keep a second build at all, when Vercel already builds? Because
+# Vercel builds only the site. This workflow runs `pnpm test` first, and
+# a red test here marks the pull request red. Vercel has no opinion on
+# our tests.
+#
+# The build machine has no Elixir, so `mix docs` cannot run here. The
+# ingest script detects the missing ExDoc output and keeps the committed
+# content/3.api pages, so the build uses the last generated reference.
+# Those pages are committed for exactly this reason (see docs/.gitignore).
+name: Docs
+
+on:
+  pull_request:
+    paths: ['docs/**']
+  push:
+    branches: [main]
+    paths: ['docs/**']
+
+# Two runs for the same ref cannot overlap; the newer one wins.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # The ingest suite and the resolver suite guard the generated pages.
+      - run: pnpm test
+
+      # The same preset and the same command that docs/vercel.json gives
+      # to Vercel. If this step passes, the deploy builds the same output.
+      - run: pnpm generate
+        env:
+          NITRO_PRESET: vercel_static
