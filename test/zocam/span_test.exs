@@ -1,0 +1,459 @@
+# [claude-code] Span tests. All Span functions are implemented; the old
+# "draft stubs" tests are gone and the backlog tests now run by default.
+# All calendar facts in the fixtures are machine-verified for 2026
+# (Jan 7/14/21/28 = Wednesdays, Jan Fridays = 2/9/16/23/30, Feb has 28
+# days and four Wednesdays 4/11/18/25, Apr Wednesdays = 1/8/15/22/29,
+# Apr 30 = Thursday, May 29 = Friday, May 31 = Sunday, Dec 30 = Wednesday,
+# US DST 2026: spring forward Mar 8, fall back Nov 1).
+defmodule Zocam.SpanTest do
+  use ExUnit.Case, async: true
+
+  alias Zocam.{Point, Span}
+
+  @utc "Etc/UTC"
+  @new_york "America/New_York"
+
+  defp horizon(from, until) do
+    %{from: from, until: until, left: :closed, right: :open}
+  end
+
+  defp year_2026, do: horizon(~U[2026-01-01 00:00:00Z], ~U[2027-01-01 00:00:00Z])
+
+  describe "canonical values" do
+    test "the empty set is a union of nothing, the universe an intersection of no constraints" do
+      assert Span.empty() == {:union, []}
+      assert Span.universe() == {:intersection, []}
+    end
+  end
+
+  describe "algebra laws" do
+    test "union([]) and intersection([]) collapse to the canonical constants" do
+      assert Span.union([]) == Span.empty()
+      assert Span.intersection([]) == Span.universe()
+    end
+
+    test "empty and universe absorb correctly through the operators" do
+      may = Span.of(Point.month(:may))
+
+      # Without these laws a naive fold makes diff(a, empty) return
+      # empty - the worst wrong answer for the operator the user
+      # singled out.
+      assert Span.diff(may, Span.empty()) == may
+      assert Span.union([may, Span.empty()]) == may
+      assert Span.intersection([may, Span.universe()]) == may
+      assert Span.complement(Span.empty()) == Span.universe()
+    end
+
+    test "a double complement collapses" do
+      may = Span.of(Point.month(:may))
+
+      assert Span.complement(Span.complement(may)) == may
+    end
+
+    test "member? on the universe is always true" do
+      assert Span.member?(Span.universe(), ~U[2026-05-15 12:00:00Z])
+    end
+
+    test "union merges touching same-cycle leaves into one compacted arc node" do
+      # Jan and Feb tile the year cycle side by side, so the union is
+      # ONE arc Jan..Feb - the "no overlapping intervals" invariant.
+      jan_feb =
+        Span.union([Span.of(Point.month(:january)), Span.of(Point.month(:february))])
+
+      assert jan_feb ==
+               Span.arc!(
+                 from: Point.month(:january),
+                 until: Point.month(:february),
+                 left: :closed,
+                 right: :closed
+               )
+    end
+  end
+
+  describe "arcs" do
+    test "arc!/1 rejects bounds of different form" do
+      # "May .. 15:00" is not an arc: the bounds live in different
+      # cycles.
+      assert_raise ArgumentError, fn ->
+        Span.arc!(from: Point.month(:may), until: Point.time(~T[15:00:00]))
+      end
+    end
+
+    test "arc!/1 requires both bounds" do
+      # A cycle has no first or last unit to default to. Unbounded
+      # sides belong to absolute!/1, where the timeline provides them.
+      assert_raise ArgumentError, fn -> Span.arc!(from: Point.month(:may)) end
+      assert_raise ArgumentError, fn -> Span.arc!(until: Point.month(:may)) end
+    end
+
+    test "from == until names the single unit; open sides exclude it wholly" do
+      # closed-closed May..May is just May...
+      may = Span.arc!(from: Point.month(:may), until: Point.month(:may))
+      assert Span.member?(may, ~U[2026-05-15 12:00:00Z])
+      refute Span.member?(may, ~U[2026-06-01 00:00:00Z])
+
+      # ...and open-open is empty, never "everything except May".
+      # Wrap is decided at the chain level, before closings expand.
+      assert Span.arc!(
+               from: Point.month(:may),
+               until: Point.month(:may),
+               left: :open,
+               right: :open
+             ) == Span.empty()
+    end
+
+    test "a wrap-around arc keeps its outer closings and stays whole at the seam" do
+      # Nov..Feb, right-open: all of Nov, Dec, Jan; February excluded
+      # entirely by the whole-unit :open. December must NOT fall into
+      # the seam (the naive split would copy :open onto the Dec side).
+      winter =
+        Span.arc!(
+          from: Point.month(:november),
+          until: Point.month(:february),
+          left: :closed,
+          right: :open
+        )
+
+      assert Span.member?(winter, ~U[2026-12-15 12:00:00Z])
+      assert Span.member?(winter, ~U[2027-01-15 12:00:00Z])
+      refute Span.member?(winter, ~U[2027-02-15 12:00:00Z])
+
+      grounded =
+        Span.ground(winter, horizon(~U[2026-07-01 00:00:00Z], ~U[2027-07-01 00:00:00Z]), @utc)
+
+      # The two split pieces re-fuse across the year seam.
+      assert [%{from: ~U[2026-11-01 00:00:00Z], until: ~U[2027-02-01 00:00:00Z]}] =
+               grounded.intervals
+    end
+
+    test "a step samples through the wrap seam, not per split piece" do
+      # Fri..Mon step 2 = {Fri, Sun}. A split that restarts the phase
+      # at the seam would wrongly include Monday.
+      # 2026-01-09 = Friday, 10 = Saturday, 11 = Sunday, 12 = Monday.
+      weekend_alt =
+        Span.arc!(
+          from: Point.weekday(:friday),
+          until: Point.weekday(:monday),
+          step: {2, :day}
+        )
+
+      assert Span.member?(weekend_alt, ~U[2026-01-09 12:00:00Z])
+      refute Span.member?(weekend_alt, ~U[2026-01-10 12:00:00Z])
+      assert Span.member?(weekend_alt, ~U[2026-01-11 12:00:00Z])
+      refute Span.member?(weekend_alt, ~U[2026-01-12 12:00:00Z])
+    end
+
+    test "a step may use a coarser unit from the chain" do
+      # "The 31st, monthly": day-grain bounds stepped by month, each
+      # landing clamped to the month it falls in.
+      monthly_31st =
+        Span.arc!(
+          from: Point.compose!(Point.month(:january), Point.day(31)),
+          until: Point.compose!(Point.month(:december), Point.day(31)),
+          step: {1, :month}
+        )
+
+      assert Span.member?(monthly_31st, ~U[2026-01-31 12:00:00Z])
+      assert Span.member?(monthly_31st, ~U[2026-02-28 12:00:00Z])
+      assert Span.member?(monthly_31st, ~U[2026-04-30 12:00:00Z])
+      refute Span.member?(monthly_31st, ~U[2026-04-29 12:00:00Z])
+    end
+
+    test "at :time grain a bare integer step is rejected; a unit-carrying step works" do
+      # A bare integer counts grain units, and Time has no unit cell.
+      assert_raise ArgumentError, fn ->
+        Span.arc!(from: Point.time(~T[09:00:00]), until: Point.time(~T[17:00:00]), step: 2)
+      end
+
+      # "Every 15 minutes between 09:00 and 17:00".
+      every_15 =
+        Span.arc!(
+          from: Point.time(~T[09:00:00]),
+          until: Point.time(~T[17:00:00]),
+          step: {15, :minute}
+        )
+
+      assert Span.member?(every_15, ~U[2026-05-15 09:15:00Z])
+      refute Span.member?(every_15, ~U[2026-05-15 09:07:00Z])
+    end
+  end
+
+  describe "denotation" do
+    test "day-number overflow clamps by default and skips on request" do
+      # Feb 2026 has 28 days. Under :clamp "the 31st" fires on Feb 28...
+      the_31st = Span.of(Point.day(31))
+      assert Span.member?(the_31st, ~U[2026-02-28 12:00:00Z])
+
+      # ...and under :skip February has no 31st at all. member? and
+      # ground share this rule: it is one denotation function.
+      literal_31st =
+        Span.of(Point.new!(scope: :month, chain: [day: 31], overflow: :skip))
+
+      refute Span.member?(literal_31st, ~U[2026-02-28 12:00:00Z])
+      assert Span.member?(literal_31st, ~U[2026-01-31 12:00:00Z])
+    end
+
+    test "day(-1) is the honest 'last day of the month'" do
+      last_day = Span.of(Point.day(-1))
+
+      assert Span.member?(last_day, ~U[2026-02-28 12:00:00Z])
+      assert Span.member?(last_day, ~U[2026-04-30 12:00:00Z])
+      refute Span.member?(last_day, ~U[2026-04-29 12:00:00Z])
+    end
+
+    test "a missing ordinal skips and stays distinct from the last ordinal" do
+      # Apr 2026 has five Wednesdays (the 29th is the 5th); Feb 2026
+      # has four, so its "5th Wednesday" names nothing - it does NOT
+      # clamp onto the last one.
+      fifth_wed = Span.of(Point.day({:nth, 5, :wednesday}))
+      last_wed = Span.of(Point.day({:nth, -1, :wednesday}))
+
+      assert Span.member?(fifth_wed, ~U[2026-04-29 12:00:00Z])
+      refute Span.member?(fifth_wed, ~U[2026-02-25 12:00:00Z])
+      assert Span.member?(last_wed, ~U[2026-02-25 12:00:00Z])
+    end
+
+    test "a fortnightly point alternates weeks from its anchor" do
+      # "Every other Wednesday", anchored in the week of Jan 7 2026.
+      # Jan 7/14/21/28 are consecutive Wednesdays.
+      fortnightly =
+        Span.of(Point.every(Point.weekday(:wednesday), 2, ~D[2026-01-07]))
+
+      assert Span.member?(fortnightly, ~U[2026-01-07 12:00:00Z])
+      refute Span.member?(fortnightly, ~U[2026-01-14 12:00:00Z])
+      assert Span.member?(fortnightly, ~U[2026-01-21 12:00:00Z])
+      refute Span.member?(fortnightly, ~U[2026-01-28 12:00:00Z])
+    end
+
+    test "absolute!/1 carries a ray and clips at grounding" do
+      # "From 2026-05-23 onward": cyclic arcs always need both bounds;
+      # absolute intervals may leave one side open, like the kernel.
+      onward = Span.absolute!(from: ~U[2026-05-23 00:00:00Z])
+
+      assert Span.member?(onward, ~U[2026-08-01 12:00:00Z])
+      refute Span.member?(onward, ~U[2026-05-22 12:00:00Z])
+
+      grounded = Span.ground(onward, year_2026(), @utc)
+
+      assert [%{from: ~U[2026-05-23 00:00:00Z], until: ~U[2027-01-01 00:00:00Z]}] =
+               grounded.intervals
+    end
+
+    test "a cross-cycle intersection stays symbolic and answers member?" do
+      # "Wednesdays in May": week cycle times year cycle. May 6 2026
+      # is a Wednesday; Apr 29 is a Wednesday outside May.
+      wednesdays_in_may =
+        Span.intersection([Span.of(Point.month(:may)), Span.of(Point.weekday(:wednesday))])
+
+      assert Span.member?(wednesdays_in_may, ~U[2026-05-06 12:00:00Z])
+      refute Span.member?(wednesdays_in_may, ~U[2026-05-07 12:00:00Z])
+      refute Span.member?(wednesdays_in_may, ~U[2026-04-29 12:00:00Z])
+    end
+  end
+
+  describe "grounding" do
+    test "a cyclic point grounds to one kernel interval per scope instance" do
+      grounded = Span.ground(Span.of(Point.month(:may)), year_2026(), @utc)
+
+      assert [%{from: ~U[2026-05-01 00:00:00Z], until: ~U[2026-06-01 00:00:00Z]}] =
+               grounded.intervals
+    end
+
+    test "instances that straddle the horizon edge are grounded, then clipped" do
+      # The last Wednesday of 2026 (Dec 30) sits in a week that runs
+      # into 2027; enumerating only fully-contained weeks would lose it.
+      grounded =
+        Span.ground(
+          Span.of(Point.weekday(:wednesday)),
+          horizon(~U[2026-12-28 00:00:00Z], ~U[2027-01-01 00:00:00Z]),
+          @utc
+        )
+
+      assert [%{from: ~U[2026-12-30 00:00:00Z], until: ~U[2026-12-31 00:00:00Z]}] =
+               grounded.intervals
+    end
+
+    test "a fall-back day grounds one wall window to two kernel intervals" do
+      # America/New_York, 2026-11-01: wall 00:30..01:30 exists in EDT
+      # (04:30Z..05:30Z) and partly again in EST (06:00Z..06:30Z).
+      night_slice =
+        Span.arc!(
+          from: Point.time(~T[00:30:00]),
+          until: Point.time(~T[01:30:00]),
+          left: :closed,
+          right: :open
+        )
+
+      grounded =
+        Span.ground(
+          night_slice,
+          horizon(~U[2026-11-01 00:00:00Z], ~U[2026-11-02 00:00:00Z]),
+          @new_york
+        )
+
+      assert [
+               %{from: ~U[2026-11-01 04:30:00Z], until: ~U[2026-11-01 05:30:00Z]},
+               %{from: ~U[2026-11-01 06:00:00Z], until: ~U[2026-11-01 06:30:00Z]}
+             ] = grounded.intervals
+    end
+
+    test "a wall time inside a spring-forward gap grounds to nothing" do
+      # America/New_York, 2026-03-08: 02:30 never appears on any clock.
+      grounded =
+        Span.ground(
+          Span.of(Point.time(~T[02:30:00])),
+          horizon(~U[2026-03-08 00:00:00Z], ~U[2026-03-09 00:00:00Z]),
+          @new_york
+        )
+
+      assert grounded.intervals == []
+    end
+
+    test "nth selects within whole cycle instances, then clips to the horizon" do
+      weekdays = Span.arc!(from: Point.weekday(:monday), until: Point.weekday(:friday))
+      last_working_day = Span.nth(-1, weekdays, per: :month)
+
+      # April 2026 ends on Thursday the 30th.
+      grounded =
+        Span.ground(
+          last_working_day,
+          horizon(~U[2026-04-01 00:00:00Z], ~U[2026-05-01 00:00:00Z]),
+          @utc
+        )
+
+      assert [%{from: ~U[2026-04-30 00:00:00Z], until: ~U[2026-05-01 00:00:00Z]}] =
+               grounded.intervals
+
+      # A horizon cut at Jan 20 must NOT elect Jan 16 as "last Friday
+      # of January": the true last Friday (Jan 30) is outside, so the
+      # answer is nothing.
+      last_friday = Span.nth(-1, Span.of(Point.weekday(:friday)), per: :month)
+
+      cut =
+        Span.ground(
+          last_friday,
+          horizon(~U[2026-01-01 00:00:00Z], ~U[2026-01-20 00:00:00Z]),
+          @utc
+        )
+
+      assert cut.intervals == []
+    end
+
+    test "a multi-month window in a DST zone grounds through every timezone period" do
+      # America/New_York 2026: EST -> EDT on Mar 8, EDT -> EST on
+      # Nov 1. A preimage that reads only the periods at the window's
+      # two endpoints loses the whole EDT summer between them, and
+      # member? then disagrees with ground (the keystone property).
+      year_span = Span.of(Point.year(2026))
+
+      grounded =
+        Span.ground(
+          year_span,
+          horizon(~U[2026-01-01 00:00:00Z], ~U[2027-01-02 00:00:00Z]),
+          @new_york
+        )
+
+      # One contiguous block: wall Jan 1 2026 00:00 EST to wall
+      # Jan 1 2027 00:00 EST, with the summer included seamlessly.
+      assert [%{from: ~U[2026-01-01 05:00:00Z], until: ~U[2027-01-01 05:00:00Z]}] =
+               grounded.intervals
+
+      assert Span.member?(year_span, ~U[2026-07-04 12:00:00Z])
+    end
+
+    test "a wrapped arc with nth-weekday bounds resolves its until in the REAL next month" do
+      # Last Saturday .. last Sunday wraps each month seam. 2026 facts:
+      # Jan 31 = last Sat of Jan, Feb 22 = last Sun of Feb,
+      # Feb 28 = last Sat of Feb, Mar 29 = last Sun of Mar.
+      # A fake next-month container that copies the current month's
+      # length elects the wrong "last Sunday".
+      pay_stretch =
+        Span.arc!(
+          from: Point.day({:nth, -1, :saturday}),
+          until: Point.day({:nth, -1, :sunday})
+        )
+
+      # Inside the January block [Jan 31, Feb 23).
+      assert Span.member?(pay_stretch, ~U[2026-02-10 12:00:00Z])
+      # In the gap between the January and February blocks.
+      refute Span.member?(pay_stretch, ~U[2026-02-25 12:00:00Z])
+      # Inside the February block [Feb 28, Mar 30).
+      assert Span.member?(pay_stretch, ~U[2026-03-25 12:00:00Z])
+    end
+
+    test "a :month step samples through the year seam of a wrapping arc" do
+      # "The 15th, monthly, from November to February": the sampling
+      # must not stop at December.
+      winter_15ths =
+        Span.arc!(
+          from: Point.compose!(Point.month(:november), Point.day(15)),
+          until: Point.compose!(Point.month(:february), Point.day(15)),
+          step: {1, :month}
+        )
+
+      assert Span.member?(winter_15ths, ~U[2026-11-15 12:00:00Z])
+      assert Span.member?(winter_15ths, ~U[2026-12-15 12:00:00Z])
+      assert Span.member?(winter_15ths, ~U[2027-01-15 12:00:00Z])
+      assert Span.member?(winter_15ths, ~U[2027-02-15 12:00:00Z])
+      refute Span.member?(winter_15ths, ~U[2027-01-20 12:00:00Z])
+    end
+
+    test "wrap is decided on the nominal chain, not on clamp-resolved dates" do
+      # day 30 .. day 29 wraps every month. In February both bounds
+      # clamp to Feb 28; a resolved-date comparison sees "one day, no
+      # wrap" there and leaves a hole through March.
+      around_month_end = Span.arc!(from: Point.day(30), until: Point.day(29))
+
+      assert Span.member?(around_month_end, ~U[2026-03-05 12:00:00Z])
+      assert Span.member?(around_month_end, ~U[2026-03-15 12:00:00Z])
+      assert Span.member?(around_month_end, ~U[2026-03-29 12:00:00Z])
+    end
+
+    test "arc!/1 rejects unimplemented step families; a bare-month step works" do
+      # Week-grain stepping is not implemented: reject loudly at
+      # construction, never crash at evaluation.
+      assert_raise ArgumentError, fn ->
+        Span.arc!(from: Point.week(2), until: Point.week(40), step: {2, :week})
+      end
+
+      # A month step over a bare month chain is plain cell arithmetic.
+      quarterly =
+        Span.arc!(from: Point.month(:january), until: Point.month(:november), step: {3, :month})
+
+      assert Span.member?(quarterly, ~U[2026-04-10 12:00:00Z])
+      refute Span.member?(quarterly, ~U[2026-02-10 12:00:00Z])
+    end
+
+    test "absolute!/1 rejects closings outside the vocabulary" do
+      assert_raise ArgumentError, fn ->
+        Span.absolute!(%{from: ~U[2026-05-23 00:00:00Z], until: nil, left: :banana, right: nil})
+      end
+    end
+
+    test "member? agrees with ground everywhere inside the horizon" do
+      # The keystone property, spot-checked: the two interpreters run
+      # one shared denotation function.
+      span =
+        Span.intersection([Span.of(Point.month(:may)), Span.of(Point.weekday(:wednesday))])
+
+      grounded = Span.ground(span, year_2026(), @utc)
+
+      probes = [
+        ~U[2026-05-06 12:00:00Z],
+        ~U[2026-05-07 12:00:00Z],
+        ~U[2026-04-29 12:00:00Z],
+        ~U[2026-05-27 23:59:59Z],
+        ~U[2026-06-03 12:00:00Z]
+      ]
+
+      for at <- probes do
+        in_ground =
+          Enum.any?(grounded.intervals, fn i ->
+            DateTime.compare(i.from, at) != :gt and DateTime.compare(at, i.until) == :lt
+          end)
+
+        assert Span.member?(span, at) == in_ground
+      end
+    end
+  end
+end
