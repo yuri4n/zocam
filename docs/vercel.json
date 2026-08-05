@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nuxtjs",
+  "buildCommand": "pnpm generate",
+  "build": {
+    "env": {
+      "NITRO_PRESET": "vercel_static"
+    }
+  }
+}
