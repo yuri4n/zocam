@@ -17,10 +17,12 @@ import {
   extractSummary,
   renderPage,
   renderIndex,
-  renderAdrPage,
+  computeAnchors,
+  moduleManifest,
 } from './ingest-exdoc.mjs'
 
 const FIXTURE = `# \`Zocam.Fake\`
+[🔗](https://github.com/yuri4n/zocam/blob/main/lib/zocam/fake.ex#L1)
 
 A fake module for tests.
 
@@ -69,6 +71,10 @@ test('moduleSlug flattens dots and downcases', () => {
 test('parseModuleDoc splits module doc and entries on h1, outside fences only', () => {
   const parsed = parseModuleDoc(FIXTURE)
   assert.equal(parsed.moduleName, 'Zocam.Fake')
+  // The ExDoc source link is lifted out of the moduledoc: it becomes data,
+  // not the first paragraph (it used to leak into the page description).
+  assert.equal(parsed.sourceUrl, 'https://github.com/yuri4n/zocam/blob/main/lib/zocam/fake.ex#L1')
+  assert.ok(!parsed.moduleDoc.includes('🔗'))
   // The moduledoc keeps its prose and its h2 section.
   assert.match(parsed.moduleDoc, /A fake module for tests\./)
   assert.match(parsed.moduleDoc, /## The unit graph/)
@@ -114,6 +120,30 @@ test('renderPage groups entries under Types and Functions with h3 names', () => 
   assert.equal(page.match(/### `union`/g).length, 2)
   // Entry-body headings sit under the entry: h2 → h4.
   assert.match(page, /#### Examples/)
+  // The lifted source link renders as a styled chip under the stamp.
+  assert.match(
+    page,
+    /\[Source on GitHub ↗\]\(https:\/\/github\.com\/yuri4n\/zocam\/blob\/main\/lib\/zocam\/fake\.ex#L1\)\{\.source-link\}/,
+  )
+})
+
+test('computeAnchors emulates the runtime heading ids, duplicates included', () => {
+  const anchors = computeAnchors(renderPage(parseModuleDoc(FIXTURE)))
+  const ids = anchors.map((a) => a.id)
+  // Backticks vanish from the heading text before slugging.
+  assert.ok(ids.includes('chain'))
+  // The duplicate `union` entry gets the "-1" suffix, like github-slugger.
+  assert.ok(ids.includes('union') && ids.includes('union-1'))
+  // Lines inside fences are never headings.
+  assert.ok(!ids.some((id) => id.includes('comment')))
+})
+
+test('moduleManifest maps each type and function to its page anchor', () => {
+  const manifest = moduleManifest(parseModuleDoc(FIXTURE))
+  assert.equal(manifest.slug, 'zocam-fake')
+  assert.deepEqual(manifest.types, { chain: 'chain' })
+  // Two arities of union share one name: the first anchor wins.
+  assert.deepEqual(manifest.functions, { union: 'union' })
 })
 
 test('renderIndex writes one timetable row per module', () => {
@@ -125,43 +155,4 @@ test('renderIndex writes one timetable row per module', () => {
   assert.match(index, /\| \[Zocam\.Fake\]\(\/api\/zocam-fake\) \| A fake module for tests\. \|/)
   // The index carries the public AI SLOP provenance stamp too.
   assert.match(index, /\[AI SLOP\]\{\.ai-slop\}/)
-})
-
-// ADR sources are plain markdown next to this app (ExDoc extras). The site
-// turns each into an MDC page: h1 → frontmatter, provenance blockquote →
-// the AI SLOP chip line, everything else untouched.
-const ADR_FIXTURE = `# ADR-009: A fake decision
-
-> **AI SLOP** — an AI agent wrote this page. [yuri4n](https://github.com/yuri4n), a senior
-> engineer, gave the direction and did the review. The review is human, thus errors can stay.
-
-## Status
-
-Accepted (2026-08-04).
-
-## Context
-
-We must pick one thing over another thing (see [ADR-002](adr-002-set-primary-spans.md)).
-
-> **Note:** ordinary blockquotes stay blockquotes.
-`
-
-test('renderAdrPage lifts the h1 into frontmatter and swaps the provenance mark for the chip', () => {
-  const page = renderAdrPage(ADR_FIXTURE)
-  assert.match(page, /^---\ntitle: "ADR-009: A fake decision"\n/)
-  // Description comes from the first real paragraph, not the provenance quote.
-  assert.match(page, /description: "Accepted \(2026-08-04\)\."/)
-  // The h1 is gone; sections keep their levels.
-  assert.ok(!page.includes('# ADR-009'))
-  assert.match(page, /## Status/)
-  // The two-line canonical blockquote becomes one chip line, joined.
-  assert.match(
-    page,
-    /\[AI SLOP\]\{\.ai-slop\} an AI agent wrote this page\. \[yuri4n\]\(https:\/\/github\.com\/yuri4n\), a senior engineer, gave the direction and did the review\./,
-  )
-  assert.ok(!page.includes('> **AI SLOP**'))
-  // Ordinary blockquotes survive.
-  assert.match(page, /> \*\*Note:\*\*/)
-  // Relative ADR links (the ExDoc form) become site routes.
-  assert.match(page, /\[ADR-002\]\(\/design\/adr-002-set-primary-spans\)/)
 })
