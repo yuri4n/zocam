@@ -5,6 +5,9 @@ seo:
 ---
 
 ::u-page-hero
+#headline
+![The zocam mark: turning orbit rings around one point.](/mark.svg){.hero-mark}
+
 #title
 ZOCAM[_]{.cursor}
 

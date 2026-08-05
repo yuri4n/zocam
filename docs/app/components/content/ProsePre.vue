@@ -7,6 +7,11 @@
 
       ```elixir fence ──▶ ProsePre (this proxy) ──▶ Nuxt UI Pre.vue
       ```mermaid fence ─▶ ProsePre (this proxy) ──▶ MermaidDiagram
+
+  Added: after an elixir fence renders, we wrap the API references inside
+  it (Zocam.Span.t(), compose/2, …) in links. This runs on the client
+  only: the highlighted markup comes from the server, and the links are an
+  enhancement on top of it (see app/utils/api-links.ts).
 -->
 <script setup lang="ts">
 import UProsePre from '@nuxt/ui/runtime/components/prose/Pre.vue'
@@ -21,11 +26,23 @@ const props = defineProps<{
   meta?: string
   class?: string
 }>()
+
+const route = useRoute()
+const router = useRouter()
+const wrap = ref<HTMLElement>()
+
+onMounted(() => {
+  if (props.language !== 'elixir' || !wrap.value) return
+  const code = wrap.value.querySelector('pre code')
+  if (code) linkifyCodeElement(code as HTMLElement, route.path, (to) => router.push(to))
+})
 </script>
 
 <template>
   <MermaidDiagram v-if="props.language === 'mermaid'" :code="props.code ?? ''" />
-  <UProsePre v-else v-bind="props">
-    <slot />
-  </UProsePre>
+  <div v-else ref="wrap" class="contents">
+    <UProsePre v-bind="props">
+      <slot />
+    </UProsePre>
+  </div>
 </template>
