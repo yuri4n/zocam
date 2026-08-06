@@ -156,3 +156,22 @@ test('renderIndex writes one timetable row per module', () => {
   // The index carries the public AI SLOP provenance stamp too.
   assert.match(index, /\[AI SLOP\]\{\.ai-slop\}/)
 })
+
+// agent: claude — the attribution rules treat the module table as a figure,
+// so it needs a caption with three parts: the figure name, one line on what
+// the figure shows, and the note that AI made it.
+test('renderIndex captions the module table, directly below it', () => {
+  const index = renderIndex([{ moduleName: 'Zocam.Fake', summary: 'A fake module for tests.' }])
+  const caption = index
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .at(-1)
+  // Part 1: the figure name opens the caption.
+  assert.match(caption, /^_Figure 1 — /)
+  // Part 2: one line that tells what the figure shows.
+  assert.match(caption, /module/)
+  // Part 3: the AI note closes the caption, in the canonical wording.
+  assert.match(caption, /AI generated, human reviewed\._$/)
+  // The caption sits below the table, not above it.
+  assert.ok(index.indexOf('_Figure 1') > index.indexOf('| [Zocam.Fake]'))
+})

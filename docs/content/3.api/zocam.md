@@ -5,7 +5,7 @@ description: "A three-layer library for time: calendar things, sets of them, and
 
 [AI SLOP]{.ai-slop} An AI agent wrote the docstrings; `mix docs` generated this page. [yuri4n](https://github.com/yuri4n), a senior engineer, gave the direction and did the review. The review is human, thus errors can stay.
 
-[Source on GitHub ↗](https://github.com/yuri4n/zocam/blob/main/lib/zocam.ex#L6){.source-link}
+[Source on GitHub ↗](https://github.com/yuri4n/zocam/blob/main/lib/zocam.ex#L13){.source-link}
 
 A three-layer library for time: calendar things, sets of them, and
 concrete intervals.
@@ -122,22 +122,24 @@ symbolic column to the concrete column — each arc instance lands as
     iex> hd(intervals).from
     ~U[2026-05-06 00:00:00Z]
 
-### One caution: the kernel answers in the shape you ask
+### One rule for shapes: operations answer with the set
 
 `Zocam.Intervals` accepts all three spellings of "some intervals" —
-one bare map, a plain list, or the struct — and its answer follows
-the shape of the first argument. Piece-level calls give piece-level
-answers, so "nothing remains" is `nil`, not an empty set:
+one bare map, a plain list, or the struct — and an operation on
+sets always answers with the set struct, whatever shape the
+operands came in. A piece constructor answers with a piece:
+`Zocam.Intervals.new!/1` builds one interval map. So "nothing
+remains" is always the empty set, never `nil`:
 
-    iex> block = %{from: ~T[09:00:00], until: ~T[17:00:00], left: :closed, right: :open}
+    iex> block = Zocam.Intervals.new!(from: ~T[09:00:00], until: ~T[17:00:00])
+    iex> block
+    %{from: ~T[09:00:00], until: ~T[17:00:00], left: :closed, right: :open}
     iex> Zocam.Intervals.diff(block, block)
-    nil
+    %Zocam.Intervals{intervals: []}
     iex> Zocam.Intervals.diff([block], [block])
-    []
-    iex> Zocam.Intervals.diff(%Zocam.Intervals{intervals: [block]}, [block])
     %Zocam.Intervals{intervals: []}
 
-The design records (ADR-001 to ADR-006) are not part of this API
+The design records (the ADR series) are not part of this API
 reference. They live on the documentation site, at
 [zocam.dev/design](https://zocam.dev/design), because each record is a
 website page with its own diagrams. This reference documents the code;

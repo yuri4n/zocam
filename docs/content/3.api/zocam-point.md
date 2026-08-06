@@ -5,7 +5,7 @@ description: "A calendar point: a concrete or abstract \"thing about time\"."
 
 [AI SLOP]{.ai-slop} An AI agent wrote the docstrings; `mix docs` generated this page. [yuri4n](https://github.com/yuri4n), a senior engineer, gave the direction and did the review. The review is human, thus errors can stay.
 
-[Source on GitHub ↗](https://github.com/yuri4n/zocam/blob/main/lib/zocam/point.ex#L7){.source-link}
+[Source on GitHub ↗](https://github.com/yuri4n/zocam/blob/main/lib/zocam/point.ex#L9){.source-link}
 
 A calendar point: a concrete or abstract "thing about time".
 
@@ -180,13 +180,37 @@ Compose two points: `outer` refined by `inner`.
 
 Defined exactly when the inner scope is a *plain* cycle whose class
 equals `grain_class(outer)`. The result keeps the outer scope and
-appends the inner chain:
+appends the inner chain. "2026" refined by "May" is "May 2026":
 
-    compose(year(2026), month(:may))
-    #=> {:ok, %Point{scope: :absolute, chain: [year: 2026, month: :may]}}
+    iex> Zocam.Point.compose(Zocam.Point.year(2026), Zocam.Point.month(:may))
+    {:ok, %Zocam.Point{scope: :absolute, chain: [year: 2026, month: :may], overflow: :clamp}}
 
-    compose(month(:may), time(~T[15:00:00]))
-    #=> {:error, %ComposeError{reason: :grain_gap, hint: "... Span.intersection ..."}}
+Sibling units share a class, so "a Wednesday" takes a time of day
+(`:weekday` and `:day` are different units of the same class):
+
+    iex> {:ok, wed_15} =
+    ...>   Zocam.Point.compose(Zocam.Point.weekday(:wednesday), Zocam.Point.time(~T[15:00:00]))
+    iex> wed_15.chain
+    [weekday: :wednesday, time: ~T[15:00:00]]
+
+The pitfall: "May at 15:00" looks like a point, but the day is free
+between month and time, so the meaning is a set. The error carries
+the runnable repair:
+
+    iex> {:error, error} =
+    ...>   Zocam.Point.compose(Zocam.Point.month(:may), Zocam.Point.time(~T[15:00:00]))
+    iex> error.reason
+    :grain_gap
+    iex> error.hint
+    "Build the set with Zocam.Span.intersection([Span.of(outer), Span.of(inner)])."
+
+The edge: weeks nest in no month and in no year, so "a Wednesday
+of 2026" does not compose either. That meaning is also a set:
+
+    iex> {:error, error} =
+    ...>   Zocam.Point.compose(Zocam.Point.year(2026), Zocam.Point.weekday(:wednesday))
+    iex> error.reason
+    :cross_cycle
 
 When the pair does not compose, the failure names why (see
 `ComposeError`):
@@ -218,7 +242,16 @@ pipelines that must raise.
 @spec compose!(t(), t()) :: t()
 ```
 
-Like `compose/2` but raises the `ComposeError`.
+Like `compose/2` but raises the `ComposeError`. Use it in a
+pipeline that must stop on a failed composition.
+
+    iex> Zocam.Point.compose!(Zocam.Point.month(:january), Zocam.Point.day(23)).chain
+    [month: :january, day: 23]
+
+"May of June" repeats a unit, so it raises:
+
+    iex> Zocam.Point.compose!(Zocam.Point.month(:may), Zocam.Point.month(:june))
+    ** (Zocam.Point.ComposeError) cannot compose [month: :may] (grain :month) with [month: :june] (repeats per :year): the chain would run backward or repeat a unit. Swap the operands, or drop the repeated unit.
 
 ### `day`
 
@@ -232,6 +265,25 @@ Accepts a day number (`23`), a negative index from the month end
 (`-1` is the last day), or an ordinal weekday selector
 (`{:nth, 1, :wednesday}` is the first Wednesday).
 
+    iex> Zocam.Point.day(23).chain
+    [day: 23]
+
+    iex> Zocam.Point.day(-1).chain
+    [day: -1]
+
+    iex> Zocam.Point.day({:nth, 1, :wednesday}).chain
+    [day: {:nth, 1, :wednesday}]
+
+A day number *measures* into the month, so it clamps where the
+month is short (see `t:overflow/0`). February 2026 has 28 days,
+and "the 31st" still fires there:
+
+    iex> Zocam.Span.member?(Zocam.Span.of(Zocam.Point.day(31)), ~U[2026-02-28 12:00:00Z])
+    true
+
+An ordinal *selects*, so a missing ordinal names nothing instead
+(see `Zocam.Span.nth/3` for the same rule at the set level).
+
 ### `every`
 
 ```elixir
@@ -239,14 +291,33 @@ Accepts a day number (`23`), a negative index from the month end
 ```
 
 Re-scope a cyclic point to every `k`-th instance of its cycle,
-counted from the instance that contains `anchor`.
+counted from the instance that contains `anchor`. This is how a
+fortnight enters the library: "every other Wednesday" is a `:week`
+point re-scoped with `k = 2`.
 
-    weekday(:wednesday) |> every(2, ~D[2026-01-07])
-    #=> "every other Wednesday", in phase with Jan 7 2026
+Jan 7, 14, and 21 of 2026 are consecutive Wednesdays; only every
+second one is in the set, in phase with the anchor:
 
-The point's scope must be a plain cycle: an `:absolute` point does
-not repeat, and re-anchoring an `{:every, ...}` scope must restate
-it from the base cycle.
+    iex> fortnightly = Zocam.Point.every(Zocam.Point.weekday(:wednesday), 2, ~D[2026-01-07])
+    iex> fortnightly.scope
+    {:every, 2, :week, ~D[2026-01-07]}
+    iex> Zocam.Span.member?(Zocam.Span.of(fortnightly), ~U[2026-01-07 12:00:00Z])
+    true
+    iex> Zocam.Span.member?(Zocam.Span.of(fortnightly), ~U[2026-01-14 12:00:00Z])
+    false
+
+The point's scope must be a plain cycle. An `:absolute` point does
+not repeat:
+
+    iex> Zocam.Point.every(Zocam.Point.year(2026), 2, ~D[2026-01-07])
+    ** (ArgumentError) an :absolute point happens once, so it cannot repeat every 2 cycles. Give a cyclic point such as Point.weekday(:wednesday).
+
+And re-anchoring an `{:every, ...}` scope must restate the rhythm
+from the base cycle:
+
+    iex> fortnightly = Zocam.Point.every(Zocam.Point.weekday(:wednesday), 2, ~D[2026-01-07])
+    iex> Zocam.Point.every(fortnightly, 3, ~D[2026-02-04])
+    ** (ArgumentError) this point already repeats every 2 week(s) from ~D[2026-01-07]. Nested anchors would hide which phase wins: restate the rhythm from the base :week cycle.
 
 ### `grain_class`
 
@@ -255,6 +326,15 @@ it from the base cycle.
 ```
 
 The class of the point's finest segment (what the point names).
+Together with `scope_class/1` it places a point on the two type
+axes; `compose/2` reads both to decide where two points meet.
+
+    iex> Zocam.Point.grain_class(Zocam.Point.month(:may))
+    :month
+
+    iex> wed_15 = Zocam.Point.compose!(Zocam.Point.weekday(:wednesday), Zocam.Point.time(~T[15:00:00]))
+    iex> Zocam.Point.grain_class(wed_15)
+    :time
 
 ### `month`
 
@@ -264,6 +344,9 @@ The class of the point's finest segment (what the point names).
 
 A month of the year: scope `:year`, grain class `:month`.
 
+    iex> Zocam.Point.month(:may)
+    %Zocam.Point{scope: :year, chain: [month: :may], overflow: :clamp}
+
 ### `month_atom`
 
 ```elixir
@@ -272,6 +355,15 @@ A month of the year: scope `:year`, grain class `:month`.
 
 The month atom of a calendar number: 1 is `:january`, 12 is `:december`.
 
+    iex> Zocam.Point.month_atom(12)
+    :december
+
+A number outside 1..12 raises the taught error (the converters take
+run-time values, so they keep a fallback clause):
+
+    iex> Zocam.Point.month_atom(13)
+    ** (ArgumentError) not a valid value for :month: 13. Give a full-name month atom such as :may.
+
 ### `month_number`
 
 ```elixir
@@ -279,6 +371,9 @@ The month atom of a calendar number: 1 is `:january`, 12 is `:december`.
 ```
 
 The calendar number of a month atom: `:january` is 1, `:december` is 12.
+
+    iex> Zocam.Point.month_number(:may)
+    5
 
 ### `new!`
 
@@ -294,6 +389,30 @@ This is the single validation walk. All other functions trust it,
 so build points with `new!/1` or the per-unit constructors, never
 with raw structs.
 
+#### Examples
+
+Build "May", the month that repeats each year (the constructor
+`month/1` is a shorthand for exactly this call):
+
+    iex> Zocam.Point.new!(scope: :year, chain: [month: :may])
+    %Zocam.Point{scope: :year, chain: [month: :may], overflow: :clamp}
+
+The pitfall: a chain that skips a level. "The 23rd of 2026" looks
+like a point, but a month is free between year and day, so the
+meaning is a set of days, not one point:
+
+    iex> Zocam.Point.new!(scope: :year, chain: [day: 23])
+    ** (ArgumentError) unit :day cannot sit directly under :year: a chain descends the unit graph one level at a time, so the next unit must be one of [:month, :week]
+
+`overflow:` decides what a too-large day number means (see
+`t:overflow/0`). The policy acts in `Zocam.Span`, where the point
+is evaluated. February 2026 has 28 days, so under `:skip` its
+"31st" names nothing:
+
+    iex> the_31st = Zocam.Point.new!(scope: :month, chain: [day: 31], overflow: :skip)
+    iex> Zocam.Span.member?(Zocam.Span.of(the_31st), ~U[2026-02-28 12:00:00Z])
+    false
+
 ### `scope_class`
 
 ```elixir
@@ -301,6 +420,12 @@ with raw structs.
 ```
 
 The class of the point's scope unit (what the point repeats in).
+
+    iex> Zocam.Point.scope_class(Zocam.Point.month(:may))
+    :year
+
+    iex> Zocam.Point.scope_class(Zocam.Point.year(2026))
+    :absolute
 
 ### `time`
 
@@ -310,6 +435,9 @@ The class of the point's scope unit (what the point repeats in).
 
 A time of the day: scope `:day`, grain class `:time`.
 
+    iex> Zocam.Point.time(~T[15:00:00])
+    %Zocam.Point{scope: :day, chain: [time: ~T[15:00:00]], overflow: :clamp}
+
 ### `week`
 
 ```elixir
@@ -317,6 +445,9 @@ A time of the day: scope `:day`, grain class `:time`.
 ```
 
 An ISO week of the year (1..53): scope `:year`, grain class `:week`.
+
+    iex> Zocam.Point.week(33)
+    %Zocam.Point{scope: :year, chain: [week: 33], overflow: :clamp}
 
 ### `weekday`
 
@@ -326,6 +457,9 @@ An ISO week of the year (1..53): scope `:year`, grain class `:week`.
 
 A day of the week: scope `:week`, grain class `:day`.
 
+    iex> Zocam.Point.weekday(:wednesday)
+    %Zocam.Point{scope: :week, chain: [weekday: :wednesday], overflow: :clamp}
+
 ### `weekday_atom`
 
 ```elixir
@@ -333,6 +467,9 @@ A day of the week: scope `:week`, grain class `:day`.
 ```
 
 The weekday atom of an ISO number: 1 is `:monday`, 7 is `:sunday`.
+
+    iex> Zocam.Point.weekday_atom(1)
+    :monday
 
 ### `weekday_number`
 
@@ -342,6 +479,9 @@ The weekday atom of an ISO number: 1 is `:monday`, 7 is `:sunday`.
 
 The ISO number of a weekday atom: `:monday` is 1, `:sunday` is 7.
 
+    iex> Zocam.Point.weekday_number(:sunday)
+    7
+
 ### `year`
 
 ```elixir
@@ -349,6 +489,9 @@ The ISO number of a weekday atom: `:monday` is 1, `:sunday` is 7.
 ```
 
 The year `n`: scope `:absolute`, grain class `:year`.
+
+    iex> Zocam.Point.year(2026)
+    %Zocam.Point{scope: :absolute, chain: [year: 2026], overflow: :clamp}
 
 ---
 
