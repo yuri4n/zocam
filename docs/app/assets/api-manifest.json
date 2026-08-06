@@ -15,9 +15,7 @@
       "both": "both",
       "closing": "closing",
       "interval": "interval",
-      "interval_opt": "interval_opt",
       "interval_opts": "interval_opts",
-      "new_opts": "new_opts",
       "only_from": "only_from",
       "only_until": "only_until",
       "t": "t",
@@ -27,8 +25,10 @@
     },
     "functions": {
       "check_and_extract_as_list!": "check_and_extract_as_list",
+      "check_closings!": "check_closings",
+      "check_endpoints!": "check_endpoints",
       "check_interval_opts!": "check_interval_opts",
-      "check_new_opts!": "check_new_opts",
+      "check_order!": "check_order",
       "complement": "complement",
       "completely_before?": "completely_before",
       "compress": "compress",
@@ -94,6 +94,7 @@
   "Zocam.Span": {
     "slug": "zocam-span",
     "types": {
+      "horizon": "horizon",
       "n": "n",
       "step": "step",
       "t": "t",

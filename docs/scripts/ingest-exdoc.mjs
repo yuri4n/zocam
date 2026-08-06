@@ -178,6 +178,10 @@ const AI_SLOP_STAMP =
 // agent: claude — the API landing page: one timetable row per module.
 // Unlike the s7r site, this site documents ONE library, so there is no
 // Library column.
+// agent: claude — changed (2026-08-05): the table is a figure, and the
+// attribution rules give every figure a caption directly below it. The
+// caption has three parts: the figure name, one line on what the figure
+// shows, and the note that AI made it.
 export function renderIndex(modules) {
   const rows = modules
     .map((m) => `| [${m.moduleName}](/api/${moduleSlug(m.moduleName)}) | ${m.summary} |`)
@@ -197,6 +201,9 @@ export function renderIndex(modules) {
     '| --- | --- |',
     rows,
     '',
+    '_Figure 1 — Every public module of zocam, with the first line of its' +
+      ' moduledoc. AI generated, human reviewed._',
+    '',
   ].join('\n')
 }
 
@@ -213,6 +220,18 @@ function main() {
   const exdocDir = join(repoRoot, 'doc')
   const pattern = /^Zocam(\..+)?\.md$/
   const apiDir = join(docsRoot, 'content', '3.api')
+
+  // agent: claude — changed (2026-08-05, bug fix): the manifest write lived
+  // only in the "we have ExDoc output" branch below. On a machine without
+  // Elixir the file could thus be absent, and the static import in
+  // app/utils/api-refs.ts cannot resolve an absent file, so the site build
+  // stopped before it started. The floor is now unconditional: `{}` is a
+  // valid manifest that maps no module. We write it only when the file does
+  // not exist, so the committed manifest is never replaced by an empty one.
+  const assetsDir = join(docsRoot, 'app', 'assets')
+  const manifestFile = join(assetsDir, 'api-manifest.json')
+  mkdirSync(assetsDir, { recursive: true })
+  if (!existsSync(manifestFile)) writeFileSync(manifestFile, '{}\n')
 
   if (!existsSync(exdocDir) && existsSync(apiDir)) {
     console.warn('[ingest-exdoc] missing ExDoc output (doc/); keeping content/3.api.')
@@ -237,9 +256,7 @@ function main() {
     // agent: claude — the API manifest feeds the link components (see
     // app/utils/api-links.ts). It is committed, like content/3.api, so a
     // build machine without Elixir keeps the last generated version.
-    const assetsDir = join(docsRoot, 'app', 'assets')
-    mkdirSync(assetsDir, { recursive: true })
-    writeFileSync(join(assetsDir, 'api-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
+    writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + '\n')
     console.log(`[ingest-exdoc] wrote ${modules.length} module pages to content/3.api/`)
   }
 }

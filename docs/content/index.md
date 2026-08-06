@@ -63,6 +63,37 @@ flowchart LR
 
 *Figure 2 — The two layers and the one crossing point: a span meets the real timeline only in `ground/3`. AI generated, human reviewed.*
 
+## One recipe
+
+You want every second Friday, 09:00–12:00, as concrete UTC intervals. Name the day, set the rhythm, cut the hours, intersect, and ground:
+
+```elixir
+fridays =
+  Zocam.Point.weekday(:friday)
+  |> Zocam.Point.every(2, ~D[2026-01-02])
+  |> Zocam.Span.of()
+
+morning =
+  Zocam.Span.arc!(
+    from: Zocam.Point.time(~T[09:00:00]),
+    until: Zocam.Point.time(~T[12:00:00])
+  )
+
+span = Zocam.Span.intersection([fridays, morning])
+
+horizon = %{
+  from: ~U[2026-01-01 00:00:00Z],
+  until: ~U[2026-02-01 00:00:00Z],
+  left: :closed,
+  right: :open
+}
+
+Zocam.Span.ground(span, horizon, "Etc/UTC").intervals
+#=> Jan 2, Jan 16, and Jan 30 — each 09:00–12:00 UTC
+```
+
+The same recipe opens the [`Zocam.Span`](/api/zocam-span) reference, where it runs as a doctest — the test suite proves it stays true.
+
 ::u-page-section
 #title
 One denotation, two questions

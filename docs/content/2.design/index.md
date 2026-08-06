@@ -19,6 +19,7 @@ Read the records in order. Each one builds on the ones before it: ADR-001 fixes 
 | [ADR-004](/design/adrs/004-fortnight-scopes) | Fortnights are `{:every, k, cycle, anchor}` scopes with subsequence semantics |
 | [ADR-005](/design/adrs/005-shared-denotation) | `member?` and `ground` share one denotation function; DST rules pinned |
 | [ADR-006](/design/adrs/006-standalone-library) | Zocam is a standalone repository that releases to Hex |
+| [ADR-007](/design/adrs/007-one-value-sets) | Set operations answer with the `%Intervals{}` struct; sets and arcs enumerate |
 
 *Figure 1 — The ADR timetable: one row per record, with the decision in one line. AI generated, human reviewed.*
 

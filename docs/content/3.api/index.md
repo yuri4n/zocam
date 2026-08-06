@@ -17,3 +17,5 @@ in `lib/`, run `mix docs` in the repository root, and rebuild.
 | [Zocam.Point.ComposeError](/api/zocam-point-composeerror) | Raised (or returned) when two points do not compose. |
 | [Zocam.Span](/api/zocam-span) | Sets of instants built from calendar points: arcs, unions, intersections, complements, and ordinal selection. |
 | [Zocam.Span.Arc](/api/zocam-span-arc) | A directed span between two bounds of the same form, with per-side closings, a step, and an overflow policy. |
+
+_Figure 1 — Every public module of zocam, with the first line of its moduledoc. AI generated, human reviewed._
