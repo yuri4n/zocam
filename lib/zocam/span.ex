@@ -2,6 +2,10 @@
 # temporal-things design (2026-08-04) and implemented in step 3 (arcs and
 # smart set constructors), step 4 (member?/2), and step 5 (ground/3 with
 # timezone resolution). No stubs remain in this module.
+# Changed (2026-08-05): moduledoc recipes and doctests across the public
+# API for the "Examples and recipes" rule (wired in
+# test/zocam/span_test.exs). All calendar facts in the examples are
+# machine-verified for 2026; see the fixture note in span_test.exs.
 defmodule Zocam.Span do
   @moduledoc """
   Sets of instants built from calendar points: arcs, unions,
@@ -25,6 +29,55 @@ defmodule Zocam.Span do
   `t:Zocam.Intervals.interval/0` is *one concrete piece* and
   `t:Zocam.Intervals.t/0` is the *concrete set*. "The four names" in
   the `Zocam` moduledoc shows the full two-by-two map.
+
+  ## Recipes
+
+  You want every second Friday, 09:00–12:00, as concrete UTC
+  intervals. Do these steps: name the day, set the rhythm, cut the
+  hours, intersect, and ground. (January 2026 has Fridays on the
+  2nd, 9th, 16th, 23rd, and 30th; the anchor Jan 2 keeps the 2nd,
+  the 16th, and the 30th.)
+
+      iex> fridays =
+      ...>   Zocam.Point.weekday(:friday)
+      ...>   |> Zocam.Point.every(2, ~D[2026-01-02])
+      ...>   |> Zocam.Span.of()
+      iex> morning =
+      ...>   Zocam.Span.arc!(
+      ...>     from: Zocam.Point.time(~T[09:00:00]),
+      ...>     until: Zocam.Point.time(~T[12:00:00])
+      ...>   )
+      iex> span = Zocam.Span.intersection([fridays, morning])
+      iex> horizon = %{
+      ...>   from: ~U[2026-01-01 00:00:00Z],
+      ...>   until: ~U[2026-02-01 00:00:00Z],
+      ...>   left: :closed,
+      ...>   right: :open
+      ...> }
+      iex> Zocam.Span.ground(span, horizon, "Etc/UTC").intervals
+      [
+        %{from: ~U[2026-01-02 09:00:00Z], until: ~U[2026-01-02 12:00:00Z], left: :closed, right: :open},
+        %{from: ~U[2026-01-16 09:00:00Z], until: ~U[2026-01-16 12:00:00Z], left: :closed, right: :open},
+        %{from: ~U[2026-01-30 09:00:00Z], until: ~U[2026-01-30 12:00:00Z], left: :closed, right: :open}
+      ]
+
+  You want the last working day of each month. Select it with
+  `nth/3`, then ask with `member?/2` — no horizon needed. April 2026
+  ends on Thursday the 30th; May 2026 ends on Sunday the 31st, so
+  its last working day is Friday the 29th:
+
+      iex> weekdays =
+      ...>   Zocam.Span.arc!(
+      ...>     from: Zocam.Point.weekday(:monday),
+      ...>     until: Zocam.Point.weekday(:friday)
+      ...>   )
+      iex> last_working_day = Zocam.Span.nth(-1, weekdays, per: :month)
+      iex> Zocam.Span.member?(last_working_day, ~U[2026-04-30 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(last_working_day, ~U[2026-05-29 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(last_working_day, ~U[2026-05-31 12:00:00Z])
+      false
 
   ## Two evaluation regimes
 
@@ -141,6 +194,89 @@ defmodule Zocam.Span do
     turns each instance of an arc into 0, 1, or 2 concrete intervals
     (a DST gap, a normal day, a DST fold). See "The four names" in
     the `Zocam` moduledoc for the full map.
+
+    ## Enumerate an arc
+
+    One instance of an arc is a row of grain cells, and `Enum` walks
+    that row: the struct implements `Enumerable` and yields the
+    symbolic cells of ONE instance, in walking order. Each cell comes
+    out as the simplest honest value — the bare cell value when the
+    bounds are single-segment chains (`:friday`, `:november`, `15`,
+    `~T[09:15:00]`), and a chain in which only the grain cell varies
+    when the bounds carry a prefix (`[month: :may, day: 11]`). The
+    walk reuses `Zocam.Span.ground/3`'s reading of "cell": the same
+    wrap rule, the same whole-unit closings, the same step sampling.
+
+    The common call — the four weekday cells of "Friday through
+    Monday" (the smart constructors hand the arc back inside an
+    `{:arcs, ...}` node, so match it out first):
+
+        iex> {:arcs, _, _, [weekend]} =
+        ...>   Zocam.Span.arc!(
+        ...>     from: Zocam.Point.weekday(:friday),
+        ...>     until: Zocam.Point.weekday(:monday)
+        ...>   )
+        iex> Enum.to_list(weekend)
+        [:friday, :saturday, :sunday, :monday]
+
+    Closings are honored: an `:open` side drops that bound's whole
+    cell, exactly as it does under grounding:
+
+        iex> {:arcs, _, _, [stay]} =
+        ...>   Zocam.Span.arc!(
+        ...>     from: Zocam.Point.weekday(:friday),
+        ...>     until: Zocam.Point.weekday(:monday),
+        ...>     right: :open
+        ...>   )
+        iex> Enum.to_list(stay)
+        [:friday, :saturday, :sunday]
+
+    The edge: a wrapping arc walks through the cycle seam, inside
+    one instance — November through February is four month cells:
+
+        iex> {:arcs, _, _, [winter]} =
+        ...>   Zocam.Span.arc!(
+        ...>     from: Zocam.Point.month(:november),
+        ...>     until: Zocam.Point.month(:february)
+        ...>   )
+        iex> Enum.to_list(winter)
+        [:november, :december, :january, :february]
+
+    The integrated use: a step whose unit is the grain samples every
+    n-th cell, so a stepped `:time` arc yields its sampled `Time`
+    values:
+
+        iex> {:arcs, _, _, [morning]} =
+        ...>   Zocam.Span.arc!(
+        ...>     from: Zocam.Point.time(~T[09:00:00]),
+        ...>     until: Zocam.Point.time(~T[12:00:00]),
+        ...>     step: {15, :minute}
+        ...>   )
+        iex> Enum.count(morning)
+        12
+        iex> Enum.take(morning, 3)
+        [~T[09:00:00], ~T[09:15:00], ~T[09:30:00]]
+
+    The pitfall: an UNstepped `:time` arc is continuous — between
+    any two instants sit infinitely many more — so it has no cells
+    to walk, and `Enum` on it raises with the two ways out:
+
+        iex> {:arcs, _, _, [window]} =
+        ...>   Zocam.Span.arc!(
+        ...>     from: Zocam.Point.time(~T[09:00:00]),
+        ...>     until: Zocam.Point.time(~T[12:00:00])
+        ...>   )
+        iex> Enum.to_list(window)
+        ** (ArgumentError) a :time-grain arc without a step is continuous, so it has no cells to enumerate. Two ways out: give the arc a step (for example step: {15, :minute}), or ground the span with Zocam.Span.ground/3 and walk the concrete intervals.
+
+    The same honesty applies to every arc whose one-instance cell
+    row is not fixed: a step whose unit is not the grain ("the 31st,
+    monthly" samples across real months), an ordinal or negative
+    bound (each month elects its own "last Saturday"), bounds that
+    differ above the grain cell, and a wrap in a cycle without a
+    fixed length (a month has 28 to 31 days). Each raises an
+    `ArgumentError` that points to `Zocam.Span.ground/3` — the
+    interpreter that walks the real calendar.
     """
     use TypedStruct
 
@@ -175,16 +311,53 @@ defmodule Zocam.Span do
           | {:complement, t()}
           | {:nth, n(), t(), Point.cycle()}
 
+  # [claude-code] Added (2026-08-05, Linear YUR-80 / decision D4).
+  # The horizon used to be spec'd as the kernel's interval(), which
+  # admits nil endpoints and Time values - shapes check_horizon!/1
+  # rejects. A spec that admits values the code refuses is a lie, so
+  # the type is now exactly what the code takes. The timezone specs
+  # below narrowed the same way: Timex.Types.valid_timezone() admits
+  # atoms and integers, but wall_date/2 and the tzdata walk take a
+  # zone NAME only, so the honest type is String.t().
+  @typedoc """
+  A bounded evaluation window for `ground/3`: a kernel-shaped map
+  whose two endpoints are both present and both `DateTime`. Many
+  spans are infinite, so an unbounded ground cannot terminate — the
+  type has no `nil` sides. When there is no right bound, use
+  `stream/3` instead.
+  """
+  @type horizon :: %{
+          from: DateTime.t(),
+          until: DateTime.t(),
+          left: Intervals.closing(),
+          right: Intervals.closing()
+        }
+
   @cycles [:year, :month, :week, :day]
 
   # [claude-code] Canonical constants: every smart constructor
   # rewrites toward them, so tests may pin them structurally.
 
-  @doc "The empty set: a union of nothing."
+  @doc """
+  The empty set: a union of nothing.
+
+      iex> Zocam.Span.empty()
+      {:union, []}
+  """
   @spec empty() :: t()
   def empty, do: {:union, []}
 
-  @doc "The whole timeline: an intersection of no constraints."
+  @doc """
+  The whole timeline: an intersection of no constraints.
+
+      iex> Zocam.Span.universe()
+      {:intersection, []}
+
+  The two constants are dual under complement:
+
+      iex> Zocam.Span.complement(Zocam.Span.empty()) == Zocam.Span.universe()
+      true
+  """
   @spec universe() :: t()
   def universe, do: {:intersection, []}
 
@@ -197,6 +370,14 @@ defmodule Zocam.Span do
 
   The result is a one-arc node whose bounds are both the point's
   chain, closed on both sides: "May" is the arc `May..May`.
+
+      iex> may = Zocam.Span.of(Zocam.Point.month(:may))
+      iex> match?({:arcs, :year, :month, [%Zocam.Span.Arc{}]}, may)
+      true
+      iex> Zocam.Span.member?(may, ~U[2026-05-15 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(may, ~U[2026-06-01 00:00:00Z])
+      false
   """
   @spec of(Point.t()) :: t()
   def of(%Point{} = point) do
@@ -229,6 +410,74 @@ defmodule Zocam.Span do
   backward in cycle order wraps: `november..february`,
   `friday..monday`. On the `:absolute` scope there is no cycle to
   wrap in, so backward bounds raise.
+
+  ## Examples
+
+  The common arc: a block of weekdays, "Friday through Monday".
+  Jan 10 2026 is a Saturday; Jan 7 is a Wednesday:
+
+      iex> weekend = Zocam.Span.arc!(
+      ...>   from: Zocam.Point.weekday(:friday),
+      ...>   until: Zocam.Point.weekday(:monday)
+      ...> )
+      iex> Zocam.Span.member?(weekend, ~U[2026-01-10 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(weekend, ~U[2026-01-07 12:00:00Z])
+      false
+
+  A time window with a step: "every 15 minutes from 09:00 to 17:00":
+
+      iex> every_15 = Zocam.Span.arc!(
+      ...>   from: Zocam.Point.time(~T[09:00:00]),
+      ...>   until: Zocam.Point.time(~T[17:00:00]),
+      ...>   step: {15, :minute}
+      ...> )
+      iex> Zocam.Span.member?(every_15, ~U[2026-05-15 09:15:00Z])
+      true
+      iex> Zocam.Span.member?(every_15, ~U[2026-05-15 09:07:00Z])
+      false
+
+  The edge: backward bounds wrap. "November through February" is one
+  continuous block across the year seam, so December is inside:
+
+      iex> winter = Zocam.Span.arc!(
+      ...>   from: Zocam.Point.month(:november),
+      ...>   until: Zocam.Point.month(:february)
+      ...> )
+      iex> Zocam.Span.member?(winter, ~U[2026-12-15 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(winter, ~U[2027-02-15 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(winter, ~U[2026-06-15 12:00:00Z])
+      false
+
+  The pitfall: `May..May` with an open side is the empty set, never
+  "everything except May". Wrap is decided at the chain level, before
+  closings expand, and a whole-unit `:open` excludes the whole unit:
+
+      iex> Zocam.Span.arc!(
+      ...>   from: Zocam.Point.month(:may),
+      ...>   until: Zocam.Point.month(:may),
+      ...>   left: :open,
+      ...>   right: :open
+      ...> )
+      {:union, []}
+
+  On the `:absolute` scope there is no cycle to wrap in, so backward
+  bounds raise instead:
+
+      iex> Zocam.Span.arc!(from: Zocam.Point.year(2027), until: Zocam.Point.year(2026))
+      ** (ArgumentError) absolute bounds run backward: [year: 2027] is after [year: 2026]. The timeline has no cycle to wrap in; swap the bounds.
+
+  A bare integer step at `:time` grain is rejected — `Time` has no
+  unit cell, so the unit must be explicit:
+
+      iex> Zocam.Span.arc!(
+      ...>   from: Zocam.Point.time(~T[09:00:00]),
+      ...>   until: Zocam.Point.time(~T[17:00:00]),
+      ...>   step: 2
+      ...> )
+      ** (ArgumentError) a bare integer step counts grain units, and :time has no unit cell. Give the unit explicitly: {2, :minute}, {2, :hour}, ...
   """
   @spec arc!(
           from: Point.t(),
@@ -298,6 +547,18 @@ defmodule Zocam.Span do
   live: cyclic arcs always have both bounds, absolute ones may not.
   Bounds must be `DateTime` (or `nil` for a ray): a span meets the
   timeline as instants, never as bare wall values.
+
+      iex> onward = Zocam.Span.absolute!(from: ~U[2026-05-23 00:00:00Z])
+      iex> Zocam.Span.member?(onward, ~U[2026-08-01 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(onward, ~U[2026-05-22 12:00:00Z])
+      false
+
+  The pitfall: a wall value is not an instant, so a `Time` bound is
+  refused here — build a daily window with `arc!/1` instead:
+
+      iex> Zocam.Span.absolute!(from: ~T[09:00:00])
+      ** (ArgumentError) absolute!/1 from: must be a DateTime or nil, got ~T[09:00:00]. Wall values (Time, month atoms) belong to Point and arc!/1.
   """
   @spec absolute!(Intervals.valid_interval()) :: t()
   def absolute!(%{from: _, until: _} = interval), do: check_absolute!(interval)
@@ -316,7 +577,26 @@ defmodule Zocam.Span do
   # Equality on spans is equality of this quasi-canonical form; true
   # semantic equality needs a horizon.
 
-  @doc "The union of the given spans. `union([])` is `empty/0`."
+  @doc """
+  The union of the given spans. `union([])` is `empty/0`.
+
+      iex> weekend = Zocam.Span.union([
+      ...>   Zocam.Span.of(Zocam.Point.weekday(:saturday)),
+      ...>   Zocam.Span.of(Zocam.Point.weekday(:sunday))
+      ...> ])
+      iex> Zocam.Span.member?(weekend, ~U[2026-01-10 12:00:00Z])
+      true
+
+  The edge: same-cycle leaves merge eagerly. January and February
+  tile the year cycle side by side, so their union *is* the arc
+  `Jan..Feb` — one node, not two:
+
+      iex> Zocam.Span.union([
+      ...>   Zocam.Span.of(Zocam.Point.month(:january)),
+      ...>   Zocam.Span.of(Zocam.Point.month(:february))
+      ...> ]) == Zocam.Span.arc!(from: Zocam.Point.month(:january), until: Zocam.Point.month(:february))
+      true
+  """
   @spec union([t()]) :: t()
   def union(spans) when is_list(spans) do
     flat =
@@ -338,7 +618,24 @@ defmodule Zocam.Span do
     end
   end
 
-  @doc "The intersection of the given spans. `intersection([])` is `universe/0`."
+  @doc """
+  The intersection of the given spans. `intersection([])` is
+  `universe/0`.
+
+  A cross-cycle intersection ("Wednesdays in May") has no finite
+  normal form before grounding, so the node holds it as data and the
+  two interpreters answer. May 6 2026 is a Wednesday; Apr 29 is a
+  Wednesday outside May:
+
+      iex> weds_in_may = Zocam.Span.intersection([
+      ...>   Zocam.Span.of(Zocam.Point.month(:may)),
+      ...>   Zocam.Span.of(Zocam.Point.weekday(:wednesday))
+      ...> ])
+      iex> Zocam.Span.member?(weds_in_may, ~U[2026-05-06 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(weds_in_may, ~U[2026-04-29 12:00:00Z])
+      false
+  """
   @spec intersection([t()]) :: t()
   def intersection(spans) when is_list(spans) do
     flat =
@@ -358,7 +655,21 @@ defmodule Zocam.Span do
     end
   end
 
-  @doc "Everything outside the given span."
+  @doc """
+  Everything outside the given span.
+
+      iex> not_may = Zocam.Span.complement(Zocam.Span.of(Zocam.Point.month(:may)))
+      iex> Zocam.Span.member?(not_may, ~U[2026-05-15 12:00:00Z])
+      false
+      iex> Zocam.Span.member?(not_may, ~U[2026-06-15 12:00:00Z])
+      true
+
+  A double complement collapses back to the original span:
+
+      iex> may = Zocam.Span.of(Zocam.Point.month(:may))
+      iex> Zocam.Span.complement(Zocam.Span.complement(may)) == may
+      true
+  """
   @spec complement(t()) :: t()
   def complement(span) do
     case span do
@@ -377,6 +688,26 @@ defmodule Zocam.Span do
   many-versus-one are not special cases: "many" is already a union
   value on either side. The linear kernel computes its own diff the
   same way, so the two layers agree by construction.
+
+  Weekdays without Wednesdays — Jan 6 2026 is a Tuesday, Jan 7 a
+  Wednesday:
+
+      iex> weekdays = Zocam.Span.arc!(
+      ...>   from: Zocam.Point.weekday(:monday),
+      ...>   until: Zocam.Point.weekday(:friday)
+      ...> )
+      iex> no_wednesdays = Zocam.Span.diff(weekdays, Zocam.Span.of(Zocam.Point.weekday(:wednesday)))
+      iex> Zocam.Span.member?(no_wednesdays, ~U[2026-01-06 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(no_wednesdays, ~U[2026-01-07 12:00:00Z])
+      false
+
+  Subtracting nothing changes nothing — the empty span absorbs
+  instead of erasing:
+
+      iex> may = Zocam.Span.of(Zocam.Point.month(:may))
+      iex> Zocam.Span.diff(may, Zocam.Span.empty()) == may
+      true
   """
   @spec diff(t(), t()) :: t()
   def diff(a, b), do: intersection([a, complement(b)])
@@ -386,8 +717,6 @@ defmodule Zocam.Span do
   Ordinal selection: the `n`-th grain cell of `span` inside each
   instance of the `per` cycle. Negative `n` counts from the end.
 
-      nth(-1, weekdays, per: :month)  # last working day of the month
-
   A missing ordinal skips the instance (no 5th Wednesday: nothing).
   Grounding widens to whole `per` instances before counting, then
   clips to the horizon, so a cut-off January never miscounts its
@@ -396,6 +725,34 @@ defmodule Zocam.Span do
   The inner span must be cyclic with day-sized grain cells: `nth`
   counts days, and an `{:absolute, _}` node or a `:time`-grain leaf
   has no day cells to count.
+
+  ## Examples
+
+  The last Friday of each month. January 2026 has Fridays on the
+  2nd, 9th, 16th, 23rd, and 30th:
+
+      iex> last_friday = Zocam.Span.nth(-1, Zocam.Span.of(Zocam.Point.weekday(:friday)), per: :month)
+      iex> Zocam.Span.member?(last_friday, ~U[2026-01-30 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(last_friday, ~U[2026-01-23 12:00:00Z])
+      false
+
+  The edge: a missing ordinal skips. February 2026 has four
+  Wednesdays, so its "5th Wednesday" names nothing — it does not
+  clamp onto the last one. April has five:
+
+      iex> fifth_wed = Zocam.Span.nth(5, Zocam.Span.of(Zocam.Point.weekday(:wednesday)), per: :month)
+      iex> Zocam.Span.member?(fifth_wed, ~U[2026-04-29 12:00:00Z])
+      true
+      iex> Zocam.Span.member?(fifth_wed, ~U[2026-02-25 12:00:00Z])
+      false
+
+  The pitfall: "the first 09:00 of the month" reads well, but a
+  `:time`-grain span has no day cells to count. Select the day
+  first, then intersect with the time window:
+
+      iex> Zocam.Span.nth(1, Zocam.Span.of(Zocam.Point.time(~T[09:00:00])), per: :month)
+      ** (ArgumentError) nth/3 counts day cells; a :time-grain span has none. Select the day first, then intersect with the time window.
   """
   @spec nth(n(), t(), per: Point.cycle()) :: t()
   def nth(n, span, opts) when is_integer(n) and n != 0 and is_list(opts) do
@@ -415,8 +772,22 @@ defmodule Zocam.Span do
   @doc """
   Is the instant inside the set? Symbolic: no horizon, no
   enumeration. Reads the wall clock of the given DateTime and applies
-  the same denotation as `ground/3` (clamping included: the 31st is
-  a member on Feb 28 under `:clamp`).
+  the same denotation as `ground/3`.
+
+      iex> may = Zocam.Span.of(Zocam.Point.month(:may))
+      iex> Zocam.Span.member?(may, ~U[2026-05-15 12:00:00Z])
+      true
+
+  Clamping is part of the shared denotation, so the two interpreters
+  cannot disagree on it. February 2026 has 28 days; under the
+  default `:clamp` the 31st fires on Feb 28, and under `:skip` it
+  does not:
+
+      iex> Zocam.Span.member?(Zocam.Span.of(Zocam.Point.day(31)), ~U[2026-02-28 12:00:00Z])
+      true
+      iex> literal_31st = Zocam.Point.new!(scope: :month, chain: [day: 31], overflow: :skip)
+      iex> Zocam.Span.member?(Zocam.Span.of(literal_31st), ~U[2026-02-28 12:00:00Z])
+      false
   """
   @spec member?(t(), DateTime.t()) :: boolean()
   def member?(span, %DateTime{} = at) do
@@ -434,19 +805,83 @@ defmodule Zocam.Span do
   grounds each fully (an instance may yield more than one kernel
   interval on DST fall-back days), then clips to the horizon and
   compresses. The horizon must be bounded on both sides: many spans
-  are infinite, so an unbounded ground cannot terminate.
+  are infinite, so an unbounded ground cannot terminate — use
+  `stream/3` when there is no right bound.
+
+  ## Examples
+
+  The common call: one cyclic point, one bounded horizon, UTC.
+
+      iex> may = Zocam.Span.of(Zocam.Point.month(:may))
+      iex> horizon = %{
+      ...>   from: ~U[2026-01-01 00:00:00Z],
+      ...>   until: ~U[2027-01-01 00:00:00Z],
+      ...>   left: :closed,
+      ...>   right: :open
+      ...> }
+      iex> Zocam.Span.ground(may, horizon, "Etc/UTC").intervals
+      [%{from: ~U[2026-05-01 00:00:00Z], until: ~U[2026-06-01 00:00:00Z], left: :closed, right: :open}]
+
+  The DST fold: on 2026-11-01, America/New_York sets its clocks
+  back, so the wall window 00:30..01:30 exists twice — once in EDT,
+  and partly again in EST. One instance grounds to *two* intervals:
+
+      iex> night = Zocam.Span.arc!(
+      ...>   from: Zocam.Point.time(~T[00:30:00]),
+      ...>   until: Zocam.Point.time(~T[01:30:00])
+      ...> )
+      iex> fall_back = %{
+      ...>   from: ~U[2026-11-01 00:00:00Z],
+      ...>   until: ~U[2026-11-02 00:00:00Z],
+      ...>   left: :closed,
+      ...>   right: :open
+      ...> }
+      iex> Zocam.Span.ground(night, fall_back, "America/New_York").intervals
+      [
+        %{from: ~U[2026-11-01 04:30:00Z], until: ~U[2026-11-01 05:30:00Z], left: :closed, right: :open},
+        %{from: ~U[2026-11-01 06:00:00Z], until: ~U[2026-11-01 06:30:00Z], left: :closed, right: :open}
+      ]
+
+  The DST gap: on 2026-03-08 the wall time 02:30 never appears on a
+  New York clock, so that instance grounds to nothing:
+
+      iex> spring = %{
+      ...>   from: ~U[2026-03-08 00:00:00Z],
+      ...>   until: ~U[2026-03-09 00:00:00Z],
+      ...>   left: :closed,
+      ...>   right: :open
+      ...> }
+      iex> Zocam.Span.ground(Zocam.Span.of(Zocam.Point.time(~T[02:30:00])), spring, "America/New_York").intervals
+      []
   """
-  @spec ground(t(), Intervals.interval(), Timex.Types.valid_timezone()) :: Intervals.t()
+  @spec ground(t(), horizon(), String.t()) :: Intervals.t()
   def ground(span, horizon, timezone) do
     horizon = check_horizon!(horizon)
     pieces = eval(span, horizon, timezone)
-    %Intervals{intervals: Intervals.compress(pieces)}
+    # [claude-code] Changed (2026-08-05, decision D2): compress/1
+    # answers with the struct itself now, so no wrapping remains.
+    Intervals.compress(pieces)
   end
 
   # [claude-code]
-  @doc "Does the span contain no instant inside the horizon?"
-  @spec empty?(t(), Intervals.interval(), Timex.Types.valid_timezone()) :: boolean()
-  def empty?(span, horizon, timezone), do: ground(span, horizon, timezone).intervals == []
+  @doc """
+  Does the span contain no instant inside the horizon?
+
+  February 2026 has four Wednesdays, so its "5th Wednesday" is empty
+  there — and not empty in April, which has five:
+
+      iex> fifth_wed = Zocam.Span.of(Zocam.Point.day({:nth, 5, :wednesday}))
+      iex> feb = %{from: ~U[2026-02-01 00:00:00Z], until: ~U[2026-03-01 00:00:00Z], left: :closed, right: :open}
+      iex> Zocam.Span.empty?(fifth_wed, feb, "Etc/UTC")
+      true
+      iex> apr = %{from: ~U[2026-04-01 00:00:00Z], until: ~U[2026-05-01 00:00:00Z], left: :closed, right: :open}
+      iex> Zocam.Span.empty?(fifth_wed, apr, "Etc/UTC")
+      false
+  """
+  # [claude-code] Changed (2026-08-05, decision D1): the set is
+  # enumerable, so the emptiness question goes through Enum.
+  @spec empty?(t(), horizon(), String.t()) :: boolean()
+  def empty?(span, horizon, timezone), do: Enum.empty?(ground(span, horizon, timezone))
 
   # [claude-code] The stream grounds one year at a time, with one
   # more year of lookahead. An interval that starts inside a chunk is
@@ -462,8 +897,17 @@ defmodule Zocam.Span do
   order. The stream grounds chunk by chunk (one year at a time, with
   a one-year lookahead), so it works without a right bound; take
   from it what you need.
+
+  The first two Wednesdays of 2026 fall on Jan 7 and Jan 14:
+
+      iex> weds = Zocam.Span.of(Zocam.Point.weekday(:wednesday))
+      iex> Zocam.Span.stream(weds, ~U[2026-01-01 00:00:00Z], "Etc/UTC") |> Enum.take(2)
+      [
+        %{from: ~U[2026-01-07 00:00:00Z], until: ~U[2026-01-08 00:00:00Z], left: :closed, right: :open},
+        %{from: ~U[2026-01-14 00:00:00Z], until: ~U[2026-01-15 00:00:00Z], left: :closed, right: :open}
+      ]
   """
-  @spec stream(t(), DateTime.t(), Timex.Types.valid_timezone()) :: Enumerable.t()
+  @spec stream(t(), DateTime.t(), String.t()) :: Enumerable.t()
   def stream(span, %DateTime{} = from, timezone) do
     # [claude-code] Added 2026-08-05 (Linear YUR-57). The check sits
     # here, not inside the start function: Stream.resource/3 is lazy,
@@ -486,8 +930,10 @@ defmodule Zocam.Span do
           right: :open
         }
 
+        # [claude-code] Changed (2026-08-05, decision D1): the set is
+        # enumerable, so the filter walks it directly.
         emitted =
-          ground(span, horizon, timezone).intervals
+          ground(span, horizon, timezone)
           |> Enum.filter(fn i ->
             starts = i.from == nil or DateTime.compare(i.from, cursor) != :lt
             in_chunk = i.from == nil or DateTime.compare(i.from, next) == :lt
@@ -971,26 +1417,31 @@ defmodule Zocam.Span do
   # kernel compression, intersection to kernel intersection (seeded
   # with the horizon itself: the universe within a horizon IS the
   # horizon), complement to kernel diff from the horizon.
-  @spec eval(t(), Intervals.interval(), Timex.Types.valid_timezone()) :: [Intervals.interval()]
+  # Changed (2026-08-05, decision D2): the kernel operations answer
+  # with the %Intervals{} struct now. eval/3 stays list-based
+  # internally (its private contract), so the folds read .intervals
+  # back - but the comprehension generators consume the struct
+  # directly, through its Enumerable implementation (decision D1).
+  @spec eval(t(), horizon(), String.t()) :: [Intervals.interval()]
   defp eval({:union, spans}, horizon, tz) do
-    spans |> Enum.flat_map(&eval(&1, horizon, tz)) |> Intervals.compress()
+    Intervals.compress(Enum.flat_map(spans, &eval(&1, horizon, tz))).intervals
   end
 
   defp eval({:intersection, spans}, horizon, tz) do
     Enum.reduce(spans, [horizon], fn span, acc ->
       case acc do
         [] -> []
-        acc -> Intervals.intersect(acc, eval(span, horizon, tz))
+        acc -> Intervals.intersect(acc, eval(span, horizon, tz)).intervals
       end
     end)
   end
 
   defp eval({:complement, span}, horizon, tz) do
-    Intervals.diff([horizon], eval(span, horizon, tz))
+    Intervals.diff([horizon], eval(span, horizon, tz)).intervals
   end
 
   defp eval({:absolute, interval}, horizon, _tz) do
-    Intervals.intersect([interval], [horizon])
+    Intervals.intersect([interval], [horizon]).intervals
   end
 
   defp eval({:nth, n, inner, per}, horizon, tz) do
@@ -1057,13 +1508,24 @@ defmodule Zocam.Span do
   # window contributes one UTC piece: the window clipped to the
   # period's wall range, shifted by the period's offset. A fall-back
   # window overlaps two periods (two pieces: the wall clock shows it
-  # twice); a window inside a spring-forward gap overlaps none. Piece
-  # edges created by the period boundary itself are :closed - the
-  # instant exists and is inside the window.
-  @spec preimage(wall_window(), Timex.Types.valid_timezone()) :: [Intervals.interval()]
+  # twice); a window inside a spring-forward gap overlaps none.
+  # Changed (2026-08-05, Linear YUR-78): each period is paired with
+  # its successor's wall start, because the closing of an edge that
+  # sits ON a period boundary depends on what the wall clock does
+  # there - see period_piece/3.
+  @spec preimage(wall_window(), String.t()) :: [Intervals.interval()]
   defp preimage({from, until, left, right}, tz) do
-    for period <- overlapping_periods(tz, from, until),
-        piece <- period_piece(period, {from, until, left, right}),
+    periods = overlapping_periods(tz, from, until)
+
+    # The walk in overlapping_periods/3 steps period by period, so
+    # consecutive list entries are adjacent on the timeline. Pair each
+    # period with the wall start of the next one; the last period has
+    # no fetched successor (its boundary lies past the window plus the
+    # offset margin, so no clipped edge can sit on it).
+    next_wall_starts = periods |> Enum.drop(1) |> Enum.map(& &1.from.wall)
+
+    for {period, next_wall_start} <- Enum.zip(periods, next_wall_starts ++ [nil]),
+        piece <- period_piece(period, next_wall_start, {from, until, left, right}),
         do: piece
   end
 
@@ -1078,14 +1540,14 @@ defmodule Zocam.Span do
   # offsets stay inside -12h..+14h; 15 h is safely past both).
   @wall_offset_margin 15 * 3600
 
-  @spec overlapping_periods(Timex.Types.valid_timezone(), NaiveDateTime.t(), NaiveDateTime.t()) ::
+  @spec overlapping_periods(String.t(), NaiveDateTime.t(), NaiveDateTime.t()) ::
           [map()]
   defp overlapping_periods(tz, from, until) do
     stop = to_gs(until) + @wall_offset_margin
     walk_periods(tz, to_gs(from) - @wall_offset_margin, stop, [])
   end
 
-  @spec walk_periods(Timex.Types.valid_timezone(), integer(), integer(), [map()]) :: [map()]
+  @spec walk_periods(String.t(), integer(), integer(), [map()]) :: [map()]
   defp walk_periods(tz, t, stop, acc) when t <= stop do
     case Tzdata.periods_for_time(tz, t, :utc) do
       [period | _] ->
@@ -1104,8 +1566,14 @@ defmodule Zocam.Span do
   @spec to_gs(NaiveDateTime.t()) :: integer()
   defp to_gs(naive), do: :calendar.datetime_to_gregorian_seconds(NaiveDateTime.to_erl(naive))
 
-  @spec period_piece(map(), wall_window()) :: [Intervals.interval()]
-  defp period_piece(period, {from, until, left, right}) do
+  # [claude-code] Changed (2026-08-05, Linear YUR-78): the upper-edge
+  # closing is decided by upper_closing/4 now; see the rule there. The
+  # old code forced :closed whenever the period boundary supplied the
+  # upper edge, which was wrong at a spring-forward gap: the boundary
+  # instant reads as a wall time PAST the gap, which the window can
+  # exclude - ground/3 then covered an instant member?/2 refused.
+  @spec period_piece(map(), integer() | nil, wall_window()) :: [Intervals.interval()]
+  defp period_piece(period, next_wall_start, {from, until, left, right}) do
     offset = period.utc_off + period.std_off
     p_from = gs_to_naive(period.from.wall)
     p_until = gs_to_naive(period.until.wall)
@@ -1119,17 +1587,85 @@ defmodule Zocam.Span do
       from == until and f == from and u == until and
         (p_until == nil or NaiveDateTime.compare(from, p_until) == :lt)
 
-    if NaiveDateTime.compare(f, u) == :lt or degenerate_ok? do
+    # [claude-code] Changed (2026-08-05, Linear YUR-78): a clip
+    # remnant of one wall instant, exactly at THIS period's start, is
+    # kept when the window's closing covers it. The rule exists
+    # because upper_closing/4 marks the previous period's edge :open
+    # at a DST seam and counts on this period to re-cover the
+    # boundary instant B. B reads as this period's wall start:
+    # - At a GAP, B reads as the post-jump wall time (02:00 ->
+    #   03:00). A window that ENDS on that reading with a :closed
+    #   edge covers B, and only this remnant can say so.
+    # - At a FOLD, B is the SECOND reading of a repeated wall time
+    #   (02:00 -> 01:00). A window that ends there :closed covers
+    #   both readings; this remnant is the second one.
+    # With a :open edge (or a window that ends before this period)
+    # the remnant covers nothing and stays dropped - that is the
+    # first YUR-78 fix, unchanged.
+    seam_point_ok? =
+      p_from != nil and
+        NaiveDateTime.compare(f, u) == :eq and
+        NaiveDateTime.compare(f, p_from) == :eq and
+        (right == :closed or NaiveDateTime.compare(u, until) == :lt)
+
+    if NaiveDateTime.compare(f, u) == :lt or degenerate_ok? or seam_point_ok? do
       [
         %{
           from: to_utc(f, offset),
           until: to_utc(u, offset),
+          # A lower edge on the period start is always :closed: a
+          # period owns its own start instant, so that instant reads
+          # as exactly f - which is inside the window here.
           left: if(f == from, do: left, else: :closed),
-          right: if(u == until, do: right, else: :closed)
+          right: upper_closing(period, next_wall_start, u, {until, right})
         }
       ]
     else
       []
+    end
+  end
+
+  # [claude-code] Added (2026-08-05, Linear YUR-78). The closing of a
+  # piece's upper edge at wall time u. The UTC instant at that edge,
+  # call it B, is what the closing includes or excludes.
+  #
+  # When u lies strictly inside the period, B reads as u on the wall
+  # clock, so the nominal closing is honest: the user's own closing
+  # (u is the window's until).
+  #
+  # When u sits ON the period boundary, B belongs to the NEXT period
+  # (a period is half-open: [from, until) on the UTC axis), so B
+  # reads as the next period's wall start. Three cases:
+  #
+  # - The wall clock jumps there (a DST seam). At a GAP the reading
+  #   lands past the seam (02:00 -> 03:00); at a FOLD it lands back
+  #   before it (02:00 -> 01:00). Either way THIS period cannot say
+  #   whether the window covers that reading - the next period's own
+  #   piece re-covers B exactly when it should (its lower edge starts
+  #   at that reading, :closed). So this edge stays :open.
+  # - No jump, and the boundary clipped the window (u is before the
+  #   window's until): B reads as u, which is inside the window's
+  #   interior, so the edge is :closed.
+  # - No jump, and the window itself ends here (u is the window's
+  #   until): B reads as u, so the user's closing is honest.
+  @spec upper_closing(
+          map(),
+          integer() | nil,
+          NaiveDateTime.t(),
+          {NaiveDateTime.t(), Intervals.closing()}
+        ) :: Intervals.closing()
+  defp upper_closing(period, next_wall_start, u, {until, right}) do
+    # Compare by instant, not by struct: a window until written with
+    # microsecond precision still sits on the boundary.
+    on_boundary? =
+      period.until.wall != :max and
+        NaiveDateTime.compare(gs_to_naive(period.until.wall), u) == :eq
+
+    cond do
+      not on_boundary? -> right
+      next_wall_start != nil and next_wall_start != period.until.wall -> :open
+      NaiveDateTime.compare(u, until) == :lt -> :closed
+      true -> right
     end
   end
 
@@ -1152,7 +1688,7 @@ defmodule Zocam.Span do
 
   # [claude-code] The wall-clock date of a UTC instant in the target
   # timezone, used to pick which cycle instances the horizon touches.
-  @spec wall_date(DateTime.t(), Timex.Types.valid_timezone()) :: Date.t()
+  @spec wall_date(DateTime.t(), String.t()) :: Date.t()
   defp wall_date(%DateTime{} = at, tz) do
     case DateTime.shift_zone(at, tz, Tzdata.TimeZoneDatabase) do
       {:ok, local} ->
@@ -1162,6 +1698,246 @@ defmodule Zocam.Span do
         raise ArgumentError, "cannot resolve timezone #{inspect(tz)}: #{inspect(reason)}"
     end
   end
+
+  # ── Enumerable cells (decision D1, span half) ──────────────────────
+
+  # [claude-code] Added (2026-08-05, decision D1). The symbolic cells
+  # of ONE instance of an arc, in walking order. This list is what
+  # the Enumerable implementation for Zocam.Span.Arc hands out (see
+  # "Enumerate an arc" in the Arc moduledoc for the examples).
+  #
+  # The walk reuses ground/3's interpretation of "cell"; it does not
+  # invent a second one:
+  # - the wrap decision is nominal_order/2's rule: an until cell
+  #   before the from cell resolves forward through the cycle seam,
+  #   exactly as arc_windows/4 resolves it with the next container;
+  # - whole-unit closings move the row's edges by whole cells, as the
+  #   unstepped branch of arc_windows/4 moves the block edges;
+  # - a step walks from the from cell; a landing exactly on the until
+  #   cell is kept only when the right side is :closed, and an :open
+  #   left drops the first sample without moving the phase - the
+  #   rules of discrete_samples/7 and time_samples/5.
+  #
+  # The walk refuses, each with a lesson, every arc whose
+  # one-instance cell row is NOT fixed: a continuous :time arc
+  # without a step, a step whose unit is not the grain, a bound
+  # without a fixed cell number (ordinals, negative day indices),
+  # bounds that differ above the grain cell, and a wrap in a cycle
+  # without a fixed length. ground/3 walks all of those on the real
+  # calendar.
+  @doc false
+  @spec arc_cells!(Arc.t()) :: [term()]
+  def arc_cells!(%Arc{} = arc) do
+    {prefix_f, {unit_f, from_cell}} = split_last(arc.from)
+    {prefix_u, {unit_u, until_cell}} = split_last(arc.until)
+
+    if unit_f != unit_u do
+      raise ArgumentError,
+            "the bounds end in different units (#{inspect(unit_f)} and " <>
+              "#{inspect(unit_u)}), so they name no common cell row. " <>
+              "Walk the real thing with Zocam.Span.ground/3."
+    end
+
+    if unit_f == :time do
+      time_cells!(arc, prefix_f, prefix_u, from_cell, until_cell)
+    else
+      discrete_cells!(arc, {prefix_f, prefix_u}, unit_f, from_cell, until_cell)
+    end
+  end
+
+  @spec split_last(Point.chain()) :: {Point.chain() | [], {Point.unit(), term()}}
+  defp split_last(chain) do
+    {prefix, [last]} = Enum.split(chain, -1)
+    {prefix, last}
+  end
+
+  # [claude-code] The :time row. Without a step the arc is
+  # continuous - between any two instants sit infinitely many more -
+  # so there is nothing honest to yield. With a step, the samples are
+  # the cells: the window is resolved on a reference day exactly as
+  # arc_windows/4 resolves it inside a real instance (a wrapping
+  # until continues into the next day), and time_samples/5 does the
+  # sampling, so Enum and ground/3 cannot disagree on the phase.
+  @spec time_cells!(Arc.t(), Point.chain() | [], Point.chain() | [], Time.t(), Time.t()) ::
+          [term()]
+  defp time_cells!(arc, prefix_f, prefix_u, from_time, until_time) do
+    case arc.step do
+      # Continuity is the first lesson: it holds whatever the
+      # prefixes are, so it must not hide behind the prefix check.
+      nil ->
+        raise ArgumentError,
+              "a :time-grain arc without a step is continuous, so it has no " <>
+                "cells to enumerate. Two ways out: give the arc a step (for " <>
+                "example step: {15, :minute}), or ground the span with " <>
+                "Zocam.Span.ground/3 and walk the concrete intervals."
+
+      {n, unit} when unit in [:hour, :minute, :second] ->
+        check_same_prefix!(arc, prefix_f, prefix_u)
+        # Any date works as the reference: the samples only carry
+        # their wall clock out.
+        ref = ~D[2000-01-03]
+        f = NaiveDateTime.new!(ref, from_time)
+        u0 = NaiveDateTime.new!(ref, until_time)
+
+        u =
+          if NaiveDateTime.compare(u0, f) == :lt,
+            do: NaiveDateTime.new!(Date.add(ref, 1), until_time),
+            else: u0
+
+        f
+        |> time_samples(u, time_unit_seconds(unit) * n, arc.left, arc.right)
+        |> Enum.map(fn {instant, _until, _l, _r} ->
+          render_cell(prefix_f, :time, NaiveDateTime.to_time(instant))
+        end)
+
+      {_n, unit} ->
+        raise ArgumentError,
+              "at :time grain the step unit must be :hour, :minute or " <>
+                ":second, got #{inspect(unit)}"
+    end
+  end
+
+  # [claude-code] The discrete row: integer cell arithmetic over the
+  # fixed cell numbering (months 1..12, weekdays 1..7, day and week
+  # and year numbers as themselves), the same numbering the union
+  # compaction uses via cell_number/2.
+  @spec discrete_cells!(
+          Arc.t(),
+          {Point.chain() | [], Point.chain() | []},
+          Point.unit(),
+          term(),
+          term()
+        ) :: [term()]
+  defp discrete_cells!(arc, {prefix_f, prefix_u}, unit, from_cell, until_cell) do
+    grain = unit_class_of(unit)
+
+    # The step check comes first, so the "31st, monthly" case gets
+    # ITS lesson even when the bounds also differ above the grain.
+    case arc.step do
+      nil ->
+        :ok
+
+      {_n, step_unit} ->
+        unless unit_class_of(step_unit) == grain do
+          raise ArgumentError,
+                "step #{inspect(arc.step)} does not walk this arc's " <>
+                  "#{inspect(grain)} cells, so the samples are not inside one " <>
+                  "instance: each landing resolves on the real calendar (the " <>
+                  "\"31st, monthly\" case clamps or skips per month). Ground " <>
+                  "the span with Zocam.Span.ground/3 to get the real dates."
+        end
+    end
+
+    check_same_prefix!(arc, prefix_f, prefix_u)
+
+    a = fixed_cell_number!(unit, from_cell)
+    b = fixed_cell_number!(unit, until_cell)
+
+    b =
+      cond do
+        b >= a ->
+          b
+
+        len = cycle_length(unit) ->
+          # The wrap: resolve the until cell forward through the
+          # seam, so Nov..Feb walks 11, 12, 13, 14 and renders the
+          # numbers back into the cycle below.
+          b + len
+
+        true ->
+          raise ArgumentError,
+                "this arc wraps from #{inspect(from_cell)} back to " <>
+                  "#{inspect(until_cell)}, and only :month and :weekday cells " <>
+                  "sit in a cycle of fixed length (12 months, 7 weekdays). " <>
+                  "#{inspect(unit)} cells do not, so one instance has no fixed " <>
+                  "cell row. Ground the span with Zocam.Span.ground/3 instead."
+      end
+
+    numbers =
+      case arc.step do
+        nil ->
+          # Whole-unit closings move the row edges by whole cells.
+          first = if arc.left == :open, do: a + 1, else: a
+          last = if arc.right == :open, do: b - 1, else: b
+          if first > last, do: [], else: Enum.to_list(first..last)
+
+        {n, _unit} ->
+          a..b
+          |> Enum.take_every(n)
+          |> then(fn samples ->
+            # A landing exactly on the until cell obeys the right
+            # closing; earlier samples stay regardless.
+            if arc.right == :open and List.last(samples) == b,
+              do: Enum.drop(samples, -1),
+              else: samples
+          end)
+          |> then(fn samples ->
+            # An :open left drops the first sample; the phase stays
+            # anchored on the from cell.
+            if arc.left == :open, do: Enum.drop(samples, 1), else: samples
+          end)
+      end
+
+    Enum.map(numbers, fn number ->
+      wrapped =
+        case cycle_length(unit) do
+          nil -> number
+          len -> Integer.mod(number - 1, len) + 1
+        end
+
+      render_cell(prefix_f, unit, cell_value(unit, wrapped))
+    end)
+  end
+
+  # [claude-code] The simplest honest cell value: bare for a
+  # single-segment bound, a chain in which only the grain cell varies
+  # when the bounds carry a prefix (documented in the Arc moduledoc).
+  @spec render_cell(Point.chain() | [], Point.unit(), term()) :: term()
+  defp render_cell([], _unit, value), do: value
+  defp render_cell(prefix, unit, value), do: prefix ++ [{unit, value}]
+
+  @spec check_same_prefix!(Arc.t(), Point.chain() | [], Point.chain() | []) :: :ok
+  defp check_same_prefix!(arc, prefix_f, prefix_u) do
+    if prefix_f != prefix_u do
+      raise ArgumentError,
+            "the bounds differ above the grain cell (#{inspect(arc.from)} .. " <>
+              "#{inspect(arc.until)}), so the cells between them cross a " <>
+              "prefix boundary and resolve on the real calendar. Ground the " <>
+              "span with Zocam.Span.ground/3 and walk the concrete intervals."
+    end
+
+    :ok
+  end
+
+  # [claude-code] The fixed cell number of one bound cell. :year
+  # rides on its own: the year number IS the cell number, but
+  # fixed_cell?/2 excludes it on purpose (the union compaction that
+  # owns that helper never merges across the unbounded year axis).
+  @spec fixed_cell_number!(Point.unit(), term()) :: integer()
+  defp fixed_cell_number!(:year, value) when is_integer(value), do: value
+
+  defp fixed_cell_number!(unit, value) do
+    if fixed_cell?(unit, value) do
+      cell_number(unit, value)
+    else
+      raise ArgumentError,
+            "the bound cell #{inspect([{unit, value}])} has no fixed number " <>
+              "inside one instance: an ordinal or a negative index resolves " <>
+              "per instance (each month elects its own \"last Saturday\"). " <>
+              "Ground the span with Zocam.Span.ground/3 and walk the real " <>
+              "dates."
+    end
+  end
+
+  # [claude-code] The cycle length behind a cell numbering, where one
+  # exists. Only these two units wrap symbolically: a month row is
+  # always 12 cells and a weekday row always 7, while day and week
+  # rows change length per instance (28..31 days, 52 or 53 weeks) and
+  # the year axis has no cycle at all.
+  @spec cycle_length(Point.unit()) :: pos_integer() | nil
+  defp cycle_length(:month), do: 12
+  defp cycle_length(:weekday), do: 7
+  defp cycle_length(_unit), do: nil
 
   # ── Validation and small helpers ───────────────────────────────────
 
@@ -1318,6 +2094,16 @@ defmodule Zocam.Span do
     _ -> false
   end
 
+  # [claude-code] Changed (2026-08-05, Linear YUR-84 and YUR-88): the
+  # closing rule and the order rule are the kernel's shared checks
+  # now (Intervals.check_closings!/1 and Intervals.check_order!/1) -
+  # lifted, not copied, so the two layers cannot drift apart. The
+  # keyword path of absolute!/1 already runs them inside the kernel's
+  # piece gate; running them here too closes the map path, which used
+  # to bypass the gate and accept an inverted DateTime pair. Only the
+  # endpoint-shape rule stays local, because this door is stricter
+  # than the kernel: an absolute span meets the timeline as instants,
+  # so a Time endpoint (legal in the kernel) is refused here.
   @spec check_absolute!(map()) :: t()
   defp check_absolute!(interval) do
     for {side, value} <- [from: interval.from, until: interval.until], value != nil do
@@ -1333,27 +2119,15 @@ defmodule Zocam.Span do
       ISO.check!(value, "the absolute!/1 #{side} bound")
     end
 
-    # Closings share the kernel's convention: a bounded side is :open
-    # or :closed, an unbounded side has no boundary and stays nil.
-    # Anything else would silently behave as :open in member?/2.
-    for {side, closing, endpoint} <- [
-          {:left, interval.left, interval.from},
-          {:right, interval.right, interval.until}
-        ] do
-      valid? = if endpoint == nil, do: closing == nil, else: closing in [:open, :closed]
+    checked =
+      %{from: interval.from, until: interval.until, left: interval.left, right: interval.right}
+      |> Intervals.check_closings!()
+      |> Intervals.check_order!()
 
-      unless valid? do
-        raise ArgumentError,
-              "absolute!/1 #{side}: must be :open or :closed on a bounded side, " <>
-                "nil on an unbounded side, got #{inspect(closing)}"
-      end
-    end
-
-    {:absolute,
-     %{from: interval.from, until: interval.until, left: interval.left, right: interval.right}}
+    {:absolute, checked}
   end
 
-  @spec check_horizon!(term()) :: Intervals.interval()
+  @spec check_horizon!(term()) :: horizon()
   defp check_horizon!(%{from: %DateTime{} = from, until: %DateTime{} = until} = horizon) do
     # [claude-code] Added 2026-08-05 (Linear YUR-57). eval/3 walks the
     # cycle instances between these two bounds by their wall-clock
@@ -1490,4 +2264,29 @@ defmodule Zocam.Span do
   defp cell_value(:month, n), do: Point.month_atom(n)
   defp cell_value(:weekday, n), do: Point.weekday_atom(n)
   defp cell_value(_unit, n), do: n
+end
+
+# [claude-code] Added (2026-08-05, decision D1, span half): one
+# instance of an arc is a row of grain cells, and Enum walks that
+# row. The list itself comes from Zocam.Span.arc_cells!/1, which
+# reuses ground/3's interpretation of "cell" - see "Enumerate an arc"
+# in the Arc moduledoc for the examples and the refusals. count/1 is
+# the row's length. member?/2 and slice/1 fall back to the
+# reduce-based walk: a cell row is short, and the fallback keeps the
+# taught errors (a continuous :time arc, a cross-instance step) in
+# exactly one place. Note the same pitfall as on Zocam.Intervals:
+# Enum.member?/2 asks "is this value one of the cells?", not "is this
+# instant covered?" - coverage questions belong to Zocam.Span.member?/2.
+defimpl Enumerable, for: Zocam.Span.Arc do
+  @impl true
+  def count(arc), do: {:ok, length(Zocam.Span.arc_cells!(arc))}
+
+  @impl true
+  def member?(_arc, _value), do: {:error, __MODULE__}
+
+  @impl true
+  def slice(_arc), do: {:error, __MODULE__}
+
+  @impl true
+  def reduce(arc, acc, fun), do: Enumerable.List.reduce(Zocam.Span.arc_cells!(arc), acc, fun)
 end

@@ -5,8 +5,19 @@
 # days and four Wednesdays 4/11/18/25, Apr Wednesdays = 1/8/15/22/29,
 # Apr 30 = Thursday, May 29 = Friday, May 31 = Sunday, Dec 30 = Wednesday,
 # US DST 2026: spring forward Mar 8, fall back Nov 1).
+# Extended (2026-08-05) with the facts the doctests add: Jan 6 = Tuesday,
+# Jan 10 = Saturday, May Wednesdays = 6/13/20/27.
 defmodule Zocam.SpanTest do
   use ExUnit.Case, async: true
+
+  # [claude-code] Added (2026-08-05): runs the doctests in the Span
+  # docstrings, the moduledoc recipes included. The doctests reuse the
+  # machine-verified 2026 facts above.
+  doctest Zocam.Span
+
+  # [claude-code] Added (2026-08-05, decision D1): runs the doctests
+  # of the "Enumerate an arc" section in the Arc moduledoc.
+  doctest Zocam.Span.Arc
 
   alias Zocam.{Point, Span}
 
@@ -309,6 +320,25 @@ defmodule Zocam.SpanTest do
       assert grounded.intervals == []
     end
 
+    # [claude-code] Added (2026-08-05, Linear YUR-85, span half). The
+    # kernel drops every piece that covers no instant, so a horizon
+    # that covers no instant can hold nothing - whatever the span.
+    test "ground/3 on a zero-width horizon returns the empty set struct" do
+      may = Span.of(Point.month(:may))
+      at = ~U[2026-05-15 12:00:00Z]
+
+      # [t, t) covers no instant at all...
+      assert Span.ground(may, %{from: at, until: at, left: :closed, right: :open}, @utc) ==
+               %Zocam.Intervals{}
+
+      # ...while the single-point horizon [t, t] covers exactly one,
+      # and May does contain it.
+      assert Span.ground(may, %{from: at, until: at, left: :closed, right: :closed}, @utc) ==
+               %Zocam.Intervals{
+                 intervals: [%{from: at, until: at, left: :closed, right: :closed}]
+               }
+    end
+
     test "nth selects within whole cycle instances, then clips to the horizon" do
       weekdays = Span.arc!(from: Point.weekday(:monday), until: Point.weekday(:friday))
       last_working_day = Span.nth(-1, weekdays, per: :month)
@@ -430,6 +460,51 @@ defmodule Zocam.SpanTest do
       end
     end
 
+    # [claude-code] Added (2026-08-05, Linear YUR-84, span half). The
+    # keyword path runs the kernel's piece gate since the funnel
+    # rebuild; the map path used to bypass it and accept an inverted
+    # pair - a set that covers nothing but breaks the ordering laws.
+    test "absolute!/1 rejects an inverted DateTime pair on both entry paths" do
+      late = ~U[2026-06-01 00:00:00Z]
+      early = ~U[2026-05-01 00:00:00Z]
+
+      # The map path...
+      assert_raise ArgumentError, ~r/runs forward/, fn ->
+        Span.absolute!(%{from: late, until: early, left: :closed, right: :open})
+      end
+
+      # ...and the keyword path.
+      assert_raise ArgumentError, ~r/runs forward/, fn ->
+        Span.absolute!(from: late, until: early)
+      end
+    end
+
+    # [claude-code] Added (2026-08-05, Linear YUR-88, span half). The
+    # closing rule is the kernel's shared check now, lifted and not
+    # copied, so the exact kernel wording proves the one source.
+    test "absolute!/1 runs the kernel's shared closing check" do
+      # A dead closing on an unbounded side is refused...
+      error =
+        assert_raise ArgumentError, fn ->
+          Span.absolute!(%{
+            from: ~U[2026-05-23 00:00:00Z],
+            until: nil,
+            left: :closed,
+            right: :closed
+          })
+        end
+
+      # ...with the kernel's own message, no local copy in front.
+      assert error.message ==
+               "right: must be :open or :closed on a bounded side, " <>
+                 "nil on an unbounded side, got :closed"
+
+      # A nil closing on a bounded side is refused the same way.
+      assert_raise ArgumentError, ~r/left: must be :open or :closed/, fn ->
+        Span.absolute!(%{from: ~U[2026-05-23 00:00:00Z], until: nil, left: nil, right: nil})
+      end
+    end
+
     test "member? agrees with ground everywhere inside the horizon" do
       # The keystone property, spot-checked: the two interpreters run
       # one shared denotation function.
@@ -453,6 +528,399 @@ defmodule Zocam.SpanTest do
           end)
 
         assert Span.member?(span, at) == in_ground
+      end
+    end
+  end
+
+  # [claude-code] Added (2026-08-05, decision D1). Unwrap the one arc
+  # of a one-arc span: Enum walks the Arc struct, and the smart
+  # constructors always hand it back inside an {:arcs, ...} node.
+  defp one_arc({:arcs, _scope, _grain, [arc]}), do: arc
+
+  # [claude-code] Added (2026-08-05, decision D1, span half). Enum
+  # over an arc walks the symbolic cells of ONE instance. These tests
+  # pin the walk against ground/3's interpretation of the same arcs:
+  # the same wrap rule, the same whole-unit closings, and the same
+  # step sampling (the doctests in the Arc moduledoc carry the four
+  # canonical examples; here sit the sharper edges).
+  describe "Enum over an arc (decision D1)" do
+    test "an :open side drops that bound's cell" do
+      arc =
+        one_arc(
+          Span.arc!(
+            from: Point.weekday(:friday),
+            until: Point.weekday(:monday),
+            left: :open,
+            right: :closed
+          )
+        )
+
+      assert Enum.to_list(arc) == [:saturday, :sunday, :monday]
+    end
+
+    test "a grain-unit step samples every n-th cell; an until landing honors the right closing" do
+      # Fri..Mon step 2 = {Fri, Sun}: the phase runs through the wrap
+      # seam, exactly as the ground sampler runs it.
+      alt =
+        one_arc(
+          Span.arc!(from: Point.weekday(:friday), until: Point.weekday(:monday), step: {2, :day})
+        )
+
+      assert Enum.to_list(alt) == [:friday, :sunday]
+
+      # Step 3 lands exactly on Monday: kept while the right side is
+      # :closed (the default)...
+      landing =
+        one_arc(
+          Span.arc!(from: Point.weekday(:friday), until: Point.weekday(:monday), step: {3, :day})
+        )
+
+      assert Enum.to_list(landing) == [:friday, :monday]
+
+      # ...and dropped when it is :open.
+      open_landing =
+        one_arc(
+          Span.arc!(
+            from: Point.weekday(:friday),
+            until: Point.weekday(:monday),
+            right: :open,
+            step: {3, :day}
+          )
+        )
+
+      assert Enum.to_list(open_landing) == [:friday]
+    end
+
+    test "a month step over month cells walks the quarters" do
+      quarterly =
+        one_arc(
+          Span.arc!(from: Point.month(:january), until: Point.month(:november), step: {3, :month})
+        )
+
+      assert Enum.to_list(quarterly) == [:january, :april, :july, :october]
+    end
+
+    test "year cells enumerate as the years themselves" do
+      years = one_arc(Span.arc!(from: Point.year(2026), until: Point.year(2028)))
+
+      assert Enum.to_list(years) == [2026, 2027, 2028]
+    end
+
+    test "a stepped :time arc wraps its samples through midnight" do
+      night =
+        one_arc(
+          Span.arc!(
+            from: Point.time(~T[22:00:00]),
+            until: Point.time(~T[06:00:00]),
+            step: {2, :hour}
+          )
+        )
+
+      # The right side defaults to :open at :time grain, so the 06:00
+      # landing is dropped.
+      assert Enum.to_list(night) == [~T[22:00:00], ~T[00:00:00], ~T[02:00:00], ~T[04:00:00]]
+    end
+
+    test "bounds with a prefix yield chains in which only the grain cell varies" do
+      mid_may =
+        one_arc(
+          Span.arc!(
+            from: Point.compose!(Point.month(:may), Point.day(10)),
+            until: Point.compose!(Point.month(:may), Point.day(12))
+          )
+        )
+
+      assert Enum.to_list(mid_may) == [
+               [month: :may, day: 10],
+               [month: :may, day: 11],
+               [month: :may, day: 12]
+             ]
+    end
+
+    test "a step whose unit is not the grain refuses with a pointer to ground/3" do
+      # "The 31st, monthly": the samples resolve per real month (a
+      # 31st clamps or skips), so they are not fixed cells of one
+      # instance.
+      monthly_31st =
+        one_arc(
+          Span.arc!(
+            from: Point.compose!(Point.month(:january), Point.day(31)),
+            until: Point.compose!(Point.month(:december), Point.day(31)),
+            step: {1, :month}
+          )
+        )
+
+      error = assert_raise ArgumentError, fn -> Enum.to_list(monthly_31st) end
+      assert error.message =~ "not inside one instance"
+      assert error.message =~ "Zocam.Span.ground/3"
+    end
+
+    test "cells without a fixed number refuse with a pointer to ground/3" do
+      # Each month elects its own "last Saturday": no fixed cell.
+      pay =
+        one_arc(
+          Span.arc!(
+            from: Point.day({:nth, -1, :saturday}),
+            until: Point.day({:nth, -1, :sunday})
+          )
+        )
+
+      assert_raise ArgumentError, ~r/Zocam\.Span\.ground\/3/, fn -> Enum.to_list(pay) end
+
+      # Day cells wrap in a cycle whose length changes per month, so
+      # a wrapped day row is not fixed either.
+      around = one_arc(Span.arc!(from: Point.day(30), until: Point.day(29)))
+      assert_raise ArgumentError, ~r/Zocam\.Span\.ground\/3/, fn -> Enum.to_list(around) end
+
+      # Bounds that differ above the grain cell cross a prefix
+      # boundary: those cells resolve on the real calendar.
+      spring =
+        one_arc(
+          Span.arc!(
+            from: Point.compose!(Point.month(:may), Point.day(20)),
+            until: Point.compose!(Point.month(:june), Point.day(10))
+          )
+        )
+
+      assert_raise ArgumentError, ~r/Zocam\.Span\.ground\/3/, fn -> Enum.to_list(spring) end
+    end
+
+    test "Enum.count and Enum.member? follow the cell row" do
+      weekend = one_arc(Span.arc!(from: Point.weekday(:friday), until: Point.weekday(:monday)))
+
+      assert Enum.count(weekend) == 4
+      assert Enum.member?(weekend, :sunday)
+      refute Enum.member?(weekend, :wednesday)
+    end
+  end
+
+  # [claude-code] Added (2026-08-05, Linear YUR-78). Helpers for the
+  # DST-seam recipes below. covered?/2 asks the grounded set the same
+  # question member?/2 answers on the span, closings included - the
+  # keystone property needs both sides of the comparison to be honest
+  # about a :closed or :open edge.
+  defp covered?(%Zocam.Intervals{} = set, %DateTime{} = at) do
+    Enum.any?(set, fn i ->
+      lower =
+        case DateTime.compare(at, i.from) do
+          :gt -> true
+          :eq -> i.left == :closed
+          :lt -> false
+        end
+
+      upper =
+        case DateTime.compare(at, i.until) do
+          :lt -> true
+          :eq -> i.right == :closed
+          :gt -> false
+        end
+
+      lower and upper
+    end)
+  end
+
+  defp local!(%DateTime{} = at, tz), do: DateTime.shift_zone!(at, tz, Tzdata.TimeZoneDatabase)
+
+  # The arc under test: the wall window [01:00, 03:00), which
+  # straddles both 2026 America/New_York seams (the clocks move at
+  # wall 02:00 on both days).
+  defp night_window do
+    Span.arc!(
+      from: Point.time(~T[01:00:00]),
+      until: Point.time(~T[03:00:00]),
+      left: :closed,
+      right: :open
+    )
+  end
+
+  # [claude-code] Added (2026-08-05, Linear YUR-78). At a DST seam the
+  # tz-period boundary can supply the upper edge of a grounded piece.
+  # The boundary instant belongs to the NEXT period, so the edge must
+  # come out :open; when the window still covers the instant's new
+  # wall reading, the next period's own piece re-covers it. Forcing
+  # :closed there made ground/3 cover ~U[2026-03-08 07:00:00Z] (local
+  # 03:00 EDT, outside [01:00, 03:00)) while member?/2 said no - the
+  # keystone property broke at every spring-forward seam.
+  describe "DST seams (YUR-78)" do
+    test "the gap edge comes out :open: 07:00Z is not covered and one wall hour remains" do
+      # 2026-03-08, America/New_York: the wall clock jumps from 02:00
+      # to 03:00, so [01:00, 03:00) holds ONE real hour (01:00..02:00
+      # EST) and ~U[2026-03-08 07:00:00Z] reads as 03:00 EDT - outside
+      # the window.
+      grounded =
+        Span.ground(
+          night_window(),
+          horizon(~U[2026-03-08 00:00:00Z], ~U[2026-03-09 00:00:00Z]),
+          @new_york
+        )
+
+      assert grounded.intervals == [
+               %{
+                 from: ~U[2026-03-08 06:00:00Z],
+                 until: ~U[2026-03-08 07:00:00Z],
+                 left: :closed,
+                 right: :open
+               }
+             ]
+
+      refute covered?(grounded, ~U[2026-03-08 07:00:00Z])
+      # member?/2 reads the wall clock, so give it the local reading.
+      refute Span.member?(night_window(), local!(~U[2026-03-08 07:00:00Z], @new_york))
+      assert Span.member?(night_window(), local!(~U[2026-03-08 06:30:00Z], @new_york))
+    end
+
+    test "the fold day keeps its full width: the doubled wall hour stays covered" do
+      # 2026-11-01: the wall clock falls back at 02:00 EDT to 01:00
+      # EST, so [01:00, 03:00) holds THREE real hours (01:00..02:00
+      # EDT, then 01:00..03:00 EST) - one contiguous UTC block.
+      grounded =
+        Span.ground(
+          night_window(),
+          horizon(~U[2026-11-01 00:00:00Z], ~U[2026-11-02 00:00:00Z]),
+          @new_york
+        )
+
+      assert [%{from: ~U[2026-11-01 05:00:00Z], until: ~U[2026-11-01 08:00:00Z]}] =
+               grounded.intervals
+    end
+
+    # [claude-code] Added (2026-08-05, Linear YUR-78, second round).
+    # The first fix made the right-OPEN window honest at the seams.
+    # A right-CLOSED window still broke: when the window's upper wall
+    # value sits exactly on a period start, the successor period's
+    # clip remnant is one wall instant wide - and period_piece/3
+    # dropped it. member?/2 reads the wall clock and says yes; the
+    # grounded set said no. Two recipes pin both seam kinds.
+    test "a closed right edge at the gap seam: the boundary instant stays covered" do
+      # 2026-03-08: the wall clock jumps 02:00 -> 03:00 EDT at
+      # ~U[2026-03-08 07:00:00Z]. The window [01:00, 03:00] ends ON
+      # the post-jump reading, and the closed edge includes it. So
+      # 07:00Z (wall 03:00 EDT) is a member - the grounded set must
+      # close its upper edge there, not stop one instant short.
+      window =
+        Span.arc!(
+          from: Point.time(~T[01:00:00]),
+          until: Point.time(~T[03:00:00]),
+          left: :closed,
+          right: :closed
+        )
+
+      grounded =
+        Span.ground(
+          window,
+          horizon(~U[2026-03-08 00:00:00Z], ~U[2026-03-09 00:00:00Z]),
+          @new_york
+        )
+
+      # One fused piece: the EST hour [06:00Z, 07:00Z) and the EDT
+      # single point [07:00Z, 07:00Z] touch, so compress joins them.
+      assert grounded.intervals == [
+               %{
+                 from: ~U[2026-03-08 06:00:00Z],
+                 until: ~U[2026-03-08 07:00:00Z],
+                 left: :closed,
+                 right: :closed
+               }
+             ]
+
+      assert covered?(grounded, ~U[2026-03-08 07:00:00Z])
+      assert Span.member?(window, local!(~U[2026-03-08 07:00:00Z], @new_york))
+      # One minute past the seam the wall reads 03:01 - outside.
+      refute covered?(grounded, ~U[2026-03-08 07:01:00Z])
+      refute Span.member?(window, local!(~U[2026-03-08 07:01:00Z], @new_york))
+    end
+
+    test "a closed right edge at the fold seam: the second wall reading survives" do
+      # 2026-11-01: the wall clock falls back 02:00 EDT -> 01:00 EST
+      # at ~U[2026-11-01 06:00:00Z]. Wall 01:00 happens twice: once
+      # as 05:00Z (EDT) and once as 06:00Z (EST). member?/2 accepts
+      # BOTH readings of a closed until at 01:00, so the grounded set
+      # must cover both - the EST reading is a single-point piece.
+      window =
+        Span.arc!(
+          from: Point.time(~T[00:30:00]),
+          until: Point.time(~T[01:00:00]),
+          left: :closed,
+          right: :closed
+        )
+
+      grounded =
+        Span.ground(
+          window,
+          horizon(~U[2026-11-01 00:00:00Z], ~U[2026-11-02 00:00:00Z]),
+          @new_york
+        )
+
+      assert grounded.intervals == [
+               %{
+                 from: ~U[2026-11-01 04:30:00Z],
+                 until: ~U[2026-11-01 05:00:00Z],
+                 left: :closed,
+                 right: :closed
+               },
+               %{
+                 from: ~U[2026-11-01 06:00:00Z],
+                 until: ~U[2026-11-01 06:00:00Z],
+                 left: :closed,
+                 right: :closed
+               }
+             ]
+
+      # Both readings of wall 01:00 are members, and both are covered.
+      for at <- [~U[2026-11-01 05:00:00Z], ~U[2026-11-01 06:00:00Z]] do
+        assert covered?(grounded, at)
+        assert Span.member?(window, local!(at, @new_york))
+      end
+
+      # Between the two readings the wall shows 01:01..02:00 EDT -
+      # past the window - so that stretch stays uncovered.
+      refute covered?(grounded, ~U[2026-11-01 05:30:00Z])
+      refute Span.member?(window, local!(~U[2026-11-01 05:30:00Z], @new_york))
+    end
+
+    test "member?/2 agrees with ground/3 on a 15-minute grid across both 2026 seams" do
+      # A deterministic sample, not the full property test - that one
+      # stays open as Linear YUR-83. Each seam day is sampled every 15
+      # minutes from its horizon start, 96 probes per day, so both
+      # seam instants (07:00Z in March, 06:00Z in November) sit
+      # exactly on the grid.
+      # [claude-code] Changed (2026-08-05, Linear YUR-78, second
+      # round): the grid now also runs two right-CLOSED windows. A
+      # closed upper edge that lands exactly on a period start is the
+      # case the first fix missed, so the closings must both sit on
+      # the grid.
+      seam_days = [
+        {~U[2026-03-08 00:00:00Z], ~U[2026-03-09 00:00:00Z]},
+        {~U[2026-11-01 00:00:00Z], ~U[2026-11-02 00:00:00Z]}
+      ]
+
+      windows = [
+        night_window(),
+        Span.arc!(
+          from: Point.time(~T[01:00:00]),
+          until: Point.time(~T[03:00:00]),
+          left: :closed,
+          right: :closed
+        ),
+        Span.arc!(
+          from: Point.time(~T[00:30:00]),
+          until: Point.time(~T[01:00:00]),
+          left: :closed,
+          right: :closed
+        )
+      ]
+
+      for window <- windows, {h_from, h_until} <- seam_days do
+        grounded = Span.ground(window, horizon(h_from, h_until), @new_york)
+
+        for quarter_hour <- 0..95 do
+          at = DateTime.add(h_from, quarter_hour * 15 * 60, :second)
+          local = local!(at, @new_york)
+
+          assert covered?(grounded, at) == Span.member?(window, local),
+                 "ground/3 and member?/2 disagree at #{inspect(at)} " <>
+                   "(local #{inspect(local)})"
+        end
       end
     end
   end
