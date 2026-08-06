@@ -11,27 +11,17 @@ ships or when it dies.
 Anything that needs an ADR, or that touches several files, goes to Linear
 instead (see "Where work is tracked" in `AGENTS.md`).
 
-## Caption the generated API index table
+<!-- agent: claude — added 2026-08-05, found while the doctests were
+     written (Linear YUR-130). -->
 
-`docs/content/2.design/index.md` gives its ADR table a caption. The
-generated `docs/content/3.api/index.md` module table has none.
+## Span.ground/3: the unbounded-horizon error cannot be a doctest
 
-The fix belongs in the generator, not in the page: `renderIndex()` in
-`docs/scripts/ingest-exdoc.mjs` writes that table. Emit a caption below
-it with the three parts the "Figures" rule asks for — the figure name,
-one line on what it shows, and the note that AI made it. Then update the
-`renderIndex` unit tests to assert it.
-
-s7r has the same gap in its own copy of the script.
-
-## Give the ADR folder a sidebar entry
-
-`docs/content/2.design/adrs/` has no `.navigation.yml`, so the folder
-shows a raw title in the sidebar. `1.guide` and `2.design` both have one.
-Add a title and an icon.
-
-The dead `/design/adr-*` links left by the same unfinished move are a
-larger item and live in Linear as YUR-69.
+`check_horizon!/1` in `lib/zocam/span.ex` writes `inspect(horizon)`
+into its error message. The key order of a map in `inspect` is not
+stable across Erlang VMs, thus a doctest cannot pin that message; the
+`ground/3` examples stop before it. If the message must become
+testable, name the missing side ("until is nil") instead of the whole
+map.
 
 ## What left this file
 
