@@ -36,10 +36,14 @@ with the struct. `new!/1` builds one piece and answers with the
 piece. `overlaps?/2` asks a question and answers with a boolean.
 
 Endpoints are `Time` (a daily wall window) or `DateTime` (a
-concrete window). The two kinds do not mix inside one interval.
-Abstract calendar values ("a Saturday", "May") do not live here:
-they belong to `Zocam.Point`, and `Zocam.Span.ground/3` turns
-them into the concrete intervals of this module.
+concrete window). The two kinds do not mix: not inside one
+interval, and not inside one operation — the kernel cannot compare
+a `Time` with a `DateTime`, so every door rejects the mix with an
+`ArgumentError` that names the way out (ground the daily window
+first, then operate on two `DateTime` sets). Abstract calendar
+values ("a Saturday", "May") do not live here: they belong to
+`Zocam.Point`, and `Zocam.Span.ground/3` turns them into the
+concrete intervals of this module.
 
 This module is the bottom layer of the library:
 

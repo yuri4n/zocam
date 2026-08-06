@@ -6,7 +6,11 @@ defmodule Zocam.MixProject do
 
   # agent: claude — the version has one source of truth: this attribute.
   # The release workflow refuses a git tag that does not match it.
-  @version "0.1.0"
+  # [cursor-agent] 0.1.0 → 0.2.0 on 2026-08-06: the one-value-set
+  # decision (ADR-007) changed the kernel's answers, a breaking
+  # change, and the door guards (YUR-81/84/85/86/87/88) now reject
+  # input that 0.1.0 accepted.
+  @version "0.2.0"
 
   def project do
     [
@@ -86,7 +90,12 @@ defmodule Zocam.MixProject do
       # DST core).
       {:tzdata, "~> 1.1"},
       {:typed_struct, "~> 0.3"},
-      {:ex_doc, "~> 0.40.3", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.40.3", only: :dev, runtime: false},
+      # [cursor-agent] Added 2026-08-06 (Linear YUR-83): the property
+      # test for the member?/ground law generates its inputs with
+      # StreamData. Test-only, so the runtime dependency list of the
+      # published library stays clean.
+      {:stream_data, "~> 1.1", only: :test}
     ]
   end
 end

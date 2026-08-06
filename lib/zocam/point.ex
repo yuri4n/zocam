@@ -281,16 +281,22 @@ defmodule Zocam.Point do
   # So `week/1`, the numeric forms of `day/1`, and the ordinal COUNT
   # in `{:nth, n, wd}` lost the taught ArgumentError and gained no
   # warning in exchange: a plain regression for those three. Only the
-  # atom and struct guards pay for themselves. Whether to give those
-  # three their fallback back is open work, not a settled decision.
+  # atom and struct guards pay for themselves.
   #
-  # Two smaller facts from the same measurement:
-  #   - The checker reports only the FIRST bad call in a function
-  #     body. Six deliberate misuses in one test function print one
-  #     warning, not six.
-  #   - `mix compile --warnings-as-errors` covers lib/ only, so the
-  #     warning the tests now emit does not break CI. Adding the flag
-  #     to the test step would break it.
+  # [cursor-agent] DECIDED 2026-08-06 (Linear YUR-81): the rule is
+  # mixed, and the split follows the measurement above. A head whose
+  # guard names a VOCABULARY stays guard-only - the checker flags the
+  # bad literal at compile time, and a fallback would silence that
+  # flag. A head whose guard names a RANGE gets its fallback back:
+  # week/1, the numeric day/1, and the ordinal count of {:nth, n, wd}
+  # raise a taught ArgumentError, because for them the checker is
+  # silent and partiality bought nothing. Each fallback guards on the
+  # part the checker CAN see (is_integer/1, a valid weekday in the
+  # nth tuple), so the vocabulary flags stay alive.
+  #
+  # One smaller fact from the same measurement: the deliberate
+  # misuses in the test suite go through apply/3 (Linear YUR-72), so
+  # the checker cannot see them and the suite prints no warning.
 
   @doc """
   The year `n`: scope `:absolute`, grain class `:year`.
@@ -315,9 +321,27 @@ defmodule Zocam.Point do
 
       iex> Zocam.Point.week(33)
       %Zocam.Point{scope: :year, chain: [week: 33], overflow: :clamp}
+
+  The pitfall: a year holds at most 53 ISO weeks, and the
+  compile-time checker cannot flag a bad number (its types carry
+  `integer()`, not `1..53`). The constructor teaches at run time
+  instead:
+
+      iex> Zocam.Point.week(54)
+      ** (ArgumentError) week/1 takes an ISO week number in 1..53, got 54. A year holds at most 53 ISO weeks.
   """
   @spec week(1..53) :: t()
   def week(n) when n in 1..53, do: new!(scope: :year, chain: [week: n])
+
+  # [cursor-agent] Added 2026-08-06 (Linear YUR-81): the range
+  # fallback. Only integers land here; a non-integer stays
+  # guard-only, because the checker DOES flag those (see the DECIDED
+  # note above the constructors).
+  def week(n) when is_integer(n) do
+    raise ArgumentError,
+          "week/1 takes an ISO week number in 1..53, got #{n}. " <>
+            "A year holds at most 53 ISO weeks."
+  end
 
   @doc """
   A day of the month: scope `:month`, grain class `:day`.
@@ -344,12 +368,36 @@ defmodule Zocam.Point do
 
   An ordinal *selects*, so a missing ordinal names nothing instead
   (see `Zocam.Span.nth/3` for the same rule at the set level).
+
+  The pitfall: no month has a 32nd day, and the compile-time checker
+  cannot flag a bad number (its types carry `integer()`, not
+  `1..31`). The constructor teaches at run time instead:
+
+      iex> Zocam.Point.day(32)
+      ** (ArgumentError) day/1 takes a day number in 1..31, or a negative index in -31..-1 (-1 is the last day of the month), got 32
   """
   @spec day(day_index() | nth_weekday()) :: t()
   def day(d) when d in 1..31 or d in -31..-1, do: new!(scope: :month, chain: [day: d])
 
   def day({:nth, n, wd} = d) when (n in 1..5 or n == -1) and wd in @weekdays do
     new!(scope: :month, chain: [day: d])
+  end
+
+  # [cursor-agent] Added 2026-08-06 (Linear YUR-81): the two range
+  # fallbacks. The weekday slot of {:nth, _, wd} stays guard-only on
+  # purpose - the checker flags a bad weekday atom, and a fallback
+  # that caught it would silence that flag (see the DECIDED note
+  # above the constructors).
+  def day({:nth, n, wd}) when wd in @weekdays do
+    raise ArgumentError,
+          "day/1 ordinal count must be in 1..5 or -1 (a month holds " <>
+            "at most five of one weekday), got #{inspect(n)}"
+  end
+
+  def day(d) when is_integer(d) do
+    raise ArgumentError,
+          "day/1 takes a day number in 1..31, or a negative index in " <>
+            "-31..-1 (-1 is the last day of the month), got #{d}"
   end
 
   @doc """

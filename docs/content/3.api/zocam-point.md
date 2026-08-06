@@ -284,6 +284,13 @@ and "the 31st" still fires there:
 An ordinal *selects*, so a missing ordinal names nothing instead
 (see `Zocam.Span.nth/3` for the same rule at the set level).
 
+The pitfall: no month has a 32nd day, and the compile-time checker
+cannot flag a bad number (its types carry `integer()`, not
+`1..31`). The constructor teaches at run time instead:
+
+    iex> Zocam.Point.day(32)
+    ** (ArgumentError) day/1 takes a day number in 1..31, or a negative index in -31..-1 (-1 is the last day of the month), got 32
+
 ### `every`
 
 ```elixir
@@ -448,6 +455,14 @@ An ISO week of the year (1..53): scope `:year`, grain class `:week`.
 
     iex> Zocam.Point.week(33)
     %Zocam.Point{scope: :year, chain: [week: 33], overflow: :clamp}
+
+The pitfall: a year holds at most 53 ISO weeks, and the
+compile-time checker cannot flag a bad number (its types carry
+`integer()`, not `1..53`). The constructor teaches at run time
+instead:
+
+    iex> Zocam.Point.week(54)
+    ** (ArgumentError) week/1 takes an ISO week number in 1..53, got 54. A year holds at most 53 ISO weeks.
 
 ### `weekday`
 
