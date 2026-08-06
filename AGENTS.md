@@ -14,17 +14,25 @@ The vision for zocam is mine. Its design uses concepts that I learned while I ex
 ## Communication
 
 - My requests are often not precise. When I say "I would like to make X", read it as the start of a discussion. First, help me make the goal clear. Then show the possible implementations and their caveats.
-- Write all prose in simple ASD-STE100: reports, code comments, docstrings, and documentation pages. Write to teach, because I want to learn.
+- <!-- agent: claude — 2026-08-05: merged this bullet and the "my goal is to learn" bullet; they said the same thing. --> Write all prose in simple ASD-STE100: reports, code comments, docstrings, and documentation pages. Write to teach, because my goal is to learn as much as possible.
 - I understand visual explanations better than text. Use diagrams when they show a flow or a structure better than words (see "Diagrams").
-- My goal is to learn as much as possible. Explain as such.
 
-## Examples
+<!-- agent: claude — section rewritten 2026-08-05 at the user's request: recipes, the "why", and the rule for tests. -->
 
-This rule is strongest here in zocam: a library teaches through its examples.
+## Examples and recipes
 
+This rule is strongest here in zocam: a library teaches through its examples. The docs teach through examples and through process, not through description alone.
+
+- **Start with the "why".** Each page and each docstring first tells what the thing tries to do, and how it connects with the rest of the library. Give the reader the purpose before the mechanics.
+- **Write recipes.** Build the docs around common scenarios: "You want to get X done. Do these steps." A recipe shows the process, step by step, not only the final call.
 - Use many examples in the docs and in the docstrings. Show each public function with at least one example that the reader can run.
 - In docstrings, write the examples as doctests (`iex>` lines). The test suite then proves that each example stays true.
-- Show the surprising cases, not only the happy path: wraps (`Nov..Feb`), overflow (`the 31st` in February), DST folds and gaps. An example of an edge teaches more than a paragraph.
+- Cover four kinds of cases:
+  - The common use case — the call that most readers come for.
+  - The pitfall — the call that looks correct and is not.
+  - The edge — wraps (`Nov..Feb`), overflow (`the 31st` in February), DST folds and gaps.
+  - The integrated use — one concept inside another, for example a point used in a span.
+- **Tests follow the same principle.** Shape a test as a recipe for a real scenario. This applies most to the integration tests. Stop where the recipe form makes a test more complicated or more costly than necessary; a plain test is then better. (An integration test still needs my approval; see "Ask me first".)
 - This is a paired rule (see "Paired agent files"); the s7r file carries the same rule.
 
 ## No users
@@ -49,6 +57,7 @@ zocam (this repository, the time library) and s7r (the application) are two repo
   The reason is on the other side of the boundary. s7r depends on zocam in two modes: it compiles the Hex release, or it compiles a checkout on disk. Its documentation follows the same switch, because a link must agree with the build that shows it. In the second mode every `Zocam.*` chip on s7r's site points at **this** server, and s7r must know the address before either server starts. A moving port is a broken link.
 
   s7r holds 4311 as its fallback. The two numbers must agree, and nothing can enforce it: checking would mean reading a file in the other repository. If this port must change, change both in the same session.
+
 - Each repository numbers its ADRs from 001. The two series are independent.
 - A decision that touches both projects becomes two ADRs, one in each repository. Each ADR records its own side only.
 - If both sites need the same machinery (the Mermaid component, the ingest script, the AI SLOP chip), make it a package that both depend on. Do not copy the file, and do not read it across the boundary.
@@ -81,6 +90,7 @@ Ask me before you:
 ## Workflow
 
 - Write code test-first (TDD).
+- <!-- agent: claude — added 2026-08-05 at the user's request. --> Shape the tests as recipes for real scenarios (see "Examples and recipes" for the limit).
 - Do not run tests while design questions are open. Ask the questions first. A test run that comes before a decision can be wasted work.
 - Update AGENTS with relevant info (and tag your changes as always).
 
@@ -143,10 +153,9 @@ Keep the report compact. A full read must take 5 to 10 minutes. I will ask quest
 
 ## Documentation
 
-- Document each choice between two or more implementations or designs. For design choices, write an ADR.
+- <!-- agent: claude — 2026-08-05: merged the "document each choice" bullet and the "one solution or another" bullet; they said the same thing. --> Document each choice between two or more implementations or designs. Record the choice in the code and in the docs. For a design choice, write an ADR.
 - If you change the code structure, the functionality, or the commands that run the code, propose the matching README changes. Ask me before you apply them (see "Ask me first").
 - Put dedicated documentation pages in `docs/content`. This directory becomes a website that uses Nuxt and Docus. Follow their proposed structure.
-- Every time you go for one solution or another, make sure to document it in the code as well as in the docs.
 - Each public page must show who made it (see "Attribution").
 
 ### Docs site skins
@@ -217,3 +226,4 @@ _Figure 3 — How an arc becomes kernel intervals. AI generated, human reviewed.
 - Use recursive data structures and algebraic data types where they fit.
 - If a component must scale, design it as a distributed system. Use Elixir constructs such as GenServer, Supervisors, and all that machinery (use as granular as you can and create nice self-healing systems). Discuss the design with me first (see "Ask me first"). Keep the pure functions separate from the process layer, so that other code can use them alone.
 - Keep the project ready to build documentation with ExDoc.
+- <!-- agent: claude — extended 2026-08-05 with the bridge to the recipe rule. --> Use property based testing. A property test checks an invariant with many generated inputs. The recipe rule does not apply to it (see "Examples and recipes").
