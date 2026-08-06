@@ -3,6 +3,13 @@
 # purpose - each layer is complete on its own.
 # Changed (2026-08-05): added "The four names" section with doctests
 # (wired in test/zocam_test.exs).
+# Changed (2026-08-05, second pass): the caution section became "One
+# rule for shapes" - decision D2 made every set operation answer
+# with the struct, so the old "the answer follows the shape of the
+# first argument" story is gone.
+# Changed (2026-08-05, docs pass): the closing note names "the ADR
+# series" instead of "ADR-001 to ADR-006", so a new record does not
+# make the sentence stale (ADR-007 exists now).
 defmodule Zocam do
   @moduledoc """
   A three-layer library for time: calendar things, sets of them, and
@@ -120,22 +127,24 @@ defmodule Zocam do
       iex> hd(intervals).from
       ~U[2026-05-06 00:00:00Z]
 
-  ### One caution: the kernel answers in the shape you ask
+  ### One rule for shapes: operations answer with the set
 
   `Zocam.Intervals` accepts all three spellings of "some intervals" —
-  one bare map, a plain list, or the struct — and its answer follows
-  the shape of the first argument. Piece-level calls give piece-level
-  answers, so "nothing remains" is `nil`, not an empty set:
+  one bare map, a plain list, or the struct — and an operation on
+  sets always answers with the set struct, whatever shape the
+  operands came in. A piece constructor answers with a piece:
+  `Zocam.Intervals.new!/1` builds one interval map. So "nothing
+  remains" is always the empty set, never `nil`:
 
-      iex> block = %{from: ~T[09:00:00], until: ~T[17:00:00], left: :closed, right: :open}
+      iex> block = Zocam.Intervals.new!(from: ~T[09:00:00], until: ~T[17:00:00])
+      iex> block
+      %{from: ~T[09:00:00], until: ~T[17:00:00], left: :closed, right: :open}
       iex> Zocam.Intervals.diff(block, block)
-      nil
+      %Zocam.Intervals{intervals: []}
       iex> Zocam.Intervals.diff([block], [block])
-      []
-      iex> Zocam.Intervals.diff(%Zocam.Intervals{intervals: [block]}, [block])
       %Zocam.Intervals{intervals: []}
 
-  The design records (ADR-001 to ADR-006) are not part of this API
+  The design records (the ADR series) are not part of this API
   reference. They live on the documentation site, at
   [zocam.dev/design](https://zocam.dev/design), because each record is a
   website page with its own diagrams. This reference documents the code;

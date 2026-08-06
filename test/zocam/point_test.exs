@@ -4,6 +4,11 @@
 defmodule Zocam.PointTest do
   use ExUnit.Case, async: true
 
+  # [claude-code] Added (2026-08-05): runs the doctests in the Point
+  # docstrings. Each public function carries runnable examples; this
+  # line makes the suite prove them.
+  doctest Zocam.Point
+
   alias Zocam.Point
   alias Zocam.Point.ComposeError
 
