@@ -91,9 +91,12 @@ defmodule Zocam.IntervalsTest do
     end
 
     test "a map with :from but no :until raises and names the shape (YUR-89)" do
+      # [cursor-agent] Changed 2026-08-06 (Linear YUR-72): the call
+      # goes through apply/3 so the compile-time checker cannot see
+      # the deliberate misuse and the suite stays free of warnings.
       error =
         assert_raise ArgumentError, fn ->
-          Intervals.union(%{from: ~T[09:00:00]}, %{from: ~T[10:00:00]})
+          apply(Intervals, :union, [%{from: ~T[09:00:00]}, %{from: ~T[10:00:00]}])
         end
 
       assert error.message =~ ":until"
@@ -173,6 +176,64 @@ defmodule Zocam.IntervalsTest do
       # The same guard covers the piece constructor's door.
       improper = [{:from, ~T[09:00:00]} | ~T[17:00:00]]
       assert_raise ArgumentError, fn -> Intervals.new!(improper) end
+    end
+
+    # [cursor-agent] Added 2026-08-06 (Linear YUR-87). One operation
+    # works on one kind of endpoint. A Time piece is a daily wall
+    # window; a DateTime piece is one concrete window. The kernel
+    # cannot compare the two kinds, so every door rejects the mix
+    # with a lesson - before, Timex raised a bare protocol error far
+    # from the mistake, possibly deep inside Span.ground/3.
+    test "a piece cannot mix a Time and a DateTime endpoint (YUR-87)" do
+      error =
+        assert_raise ArgumentError, fn ->
+          Intervals.new!(from: ~T[09:00:00], until: ~U[2026-01-01 18:00:00Z])
+        end
+
+      assert error.message =~ "Time"
+      assert error.message =~ "DateTime"
+      assert error.message =~ "ground"
+    end
+
+    test "a mixed map operand is stopped at the funnel (YUR-87)" do
+      mixed = %{
+        from: ~T[09:00:00],
+        until: ~U[2026-01-01 18:00:00Z],
+        left: :closed,
+        right: :open
+      }
+
+      assert_raise ArgumentError, fn -> Intervals.compress(mixed) end
+    end
+
+    test "one operation cannot mix a Time set and a DateTime set (YUR-87)" do
+      daily = Intervals.new!(from: ~T[09:00:00], until: ~T[17:00:00])
+
+      jan7 = %{
+        from: ~U[2026-01-07 00:00:00Z],
+        until: ~U[2026-01-08 00:00:00Z],
+        left: :closed,
+        right: :open
+      }
+
+      for operation <- [
+            fn -> Intervals.diff(jan7, daily) end,
+            fn -> Intervals.union(jan7, daily) end,
+            fn -> Intervals.intersect(daily, jan7) end,
+            fn -> Intervals.compress([daily, jan7]) end,
+            fn -> Intervals.overlaps?(jan7, daily) end
+          ] do
+        error = assert_raise ArgumentError, operation
+        assert error.message =~ "ground"
+      end
+    end
+
+    test "a ray beside a bounded piece of the same kind stays fine (YUR-87)" do
+      # A nil endpoint has no kind: the one bounded side decides alone.
+      ray = Intervals.new!(from: ~T[09:00:00])
+      noon = Intervals.new!(from: ~T[12:00:00], until: ~T[13:00:00])
+
+      assert %Intervals{} = Intervals.union(ray, noon)
     end
 
     test "a map with the four keys plus extras raises and names them (YUR-89)" do

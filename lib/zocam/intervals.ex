@@ -44,10 +44,14 @@ defmodule Zocam.Intervals do
   piece. `overlaps?/2` asks a question and answers with a boolean.
 
   Endpoints are `Time` (a daily wall window) or `DateTime` (a
-  concrete window). The two kinds do not mix inside one interval.
-  Abstract calendar values ("a Saturday", "May") do not live here:
-  they belong to `Zocam.Point`, and `Zocam.Span.ground/3` turns
-  them into the concrete intervals of this module.
+  concrete window). The two kinds do not mix: not inside one
+  interval, and not inside one operation — the kernel cannot compare
+  a `Time` with a `DateTime`, so every door rejects the mix with an
+  `ArgumentError` that names the way out (ground the daily window
+  first, then operate on two `DateTime` sets). Abstract calendar
+  values ("a Saturday", "May") do not live here: they belong to
+  `Zocam.Point`, and `Zocam.Span.ground/3` turns them into the
+  concrete intervals of this module.
 
   This module is the bottom layer of the library:
 
@@ -104,7 +108,9 @@ defmodule Zocam.Intervals do
       [~U[2026-01-07 00:00:00Z], ~U[2026-01-14 00:00:00Z]]
   """
 
-  use Timex
+  # [cursor-agent] Removed `use Timex` 2026-08-06 (Linear YUR-82):
+  # its six injected aliases appeared nowhere in this file, and the
+  # Timex.before?/after? calls below are fully qualified.
   use TypedStruct
 
   # [claude-code] Whether an endpoint belongs to its interval.
@@ -312,8 +318,54 @@ defmodule Zocam.Intervals do
     piece
     |> check_exact_keys!()
     |> check_endpoints!()
+    |> check_same_kind!()
     |> check_closings!()
     |> check_order!()
+  end
+
+  # [cursor-agent] Added (2026-08-06, Linear YUR-87): one interval
+  # holds one kind of endpoint. check_endpoints!/1 has already
+  # narrowed each side to Time, DateTime, or nil, so two struct
+  # matches decide the mix. A nil side has no kind and mixes with
+  # nothing.
+  @spec check_same_kind!(interval()) :: interval()
+  defp check_same_kind!(%{from: %Time{}, until: %DateTime{}} = piece), do: raise_mixed!([piece])
+  defp check_same_kind!(%{from: %DateTime{}, until: %Time{}} = piece), do: raise_mixed!([piece])
+  defp check_same_kind!(piece), do: piece
+
+  # [cursor-agent] Added (2026-08-06, Linear YUR-87): one operation
+  # works on one kind of endpoint. Each set operation calls this on
+  # all its pieces together — both operands at once — because the
+  # comparison helpers meet pieces across the operand boundary. The
+  # per-piece check above cannot catch that: two pieces can each be
+  # pure and still disagree with each other.
+  @spec check_one_kind!([interval()]) :: [interval()]
+  defp check_one_kind!(pieces) do
+    kinds =
+      pieces
+      |> Enum.flat_map(fn piece -> [piece.from, piece.until] end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map(fn
+        %Time{} -> Time
+        %DateTime{} -> DateTime
+      end)
+      |> Enum.uniq()
+
+    if length(kinds) > 1, do: raise_mixed!(pieces)
+
+    pieces
+  end
+
+  @spec raise_mixed!([interval()]) :: no_return()
+  defp raise_mixed!(pieces) do
+    raise ArgumentError,
+          "These endpoints mix a Time (a daily wall window, such as " <>
+            "~T[09:00:00]) and a DateTime (one concrete window, such as " <>
+            "~U[2026-01-07 09:00:00Z]). One interval holds one kind, and " <>
+            "one operation works on one kind: the kernel cannot compare " <>
+            "the two. Ground the daily window first — Zocam.Span.ground/3 " <>
+            "turns wall windows into concrete intervals — and then " <>
+            "operate on two DateTime sets. Got: #{inspect(pieces)}"
   end
 
   # [claude-code] Added (2026-08-05, YUR-89 verifier pass): a map
@@ -680,6 +732,7 @@ defmodule Zocam.Intervals do
   def overlaps?(lhs, rhs) do
     lhs = check_and_extract_as_list!(lhs)
     rhs = check_and_extract_as_list!(rhs)
+    check_one_kind!(lhs ++ rhs)
 
     Enum.any?(lhs, fn l -> Enum.any?(rhs, &overlapping_pieces?(l, &1)) end)
   end
@@ -804,6 +857,7 @@ defmodule Zocam.Intervals do
   @spec union(at_least_one_valid(), at_least_one_valid()) :: t()
   def union(this, other) do
     (check_and_extract_as_list!(this) ++ check_and_extract_as_list!(other))
+    |> check_one_kind!()
     |> normalize()
     |> wrap()
   end
@@ -904,6 +958,7 @@ defmodule Zocam.Intervals do
   def compress(operand) do
     operand
     |> check_and_extract_as_list!()
+    |> check_one_kind!()
     |> normalize()
     |> wrap()
   end
@@ -933,7 +988,11 @@ defmodule Zocam.Intervals do
   # moved to the private intersect_pieces/2.
   @spec intersect(at_least_one_valid(), at_least_one_valid()) :: t()
   def intersect(this, other) do
-    intersect_lists(check_and_extract_as_list!(this), check_and_extract_as_list!(other))
+    these = check_and_extract_as_list!(this)
+    others = check_and_extract_as_list!(other)
+    check_one_kind!(these ++ others)
+
+    intersect_lists(these, others)
     |> normalize()
     |> wrap()
   end
@@ -991,7 +1050,9 @@ defmodule Zocam.Intervals do
   @spec complement(at_least_one_valid()) :: t()
   def complement(operand) do
     per_interval =
-      check_and_extract_as_list!(operand)
+      operand
+      |> check_and_extract_as_list!()
+      |> check_one_kind!()
       |> Enum.map(&complement_piece/1)
       |> Enum.map(fn
         nil -> []
@@ -1088,6 +1149,7 @@ defmodule Zocam.Intervals do
   def diff(this, other) do
     these = check_and_extract_as_list!(this)
     others = check_and_extract_as_list!(other)
+    check_one_kind!(these ++ others)
 
     others
     |> Enum.reduce(these, fn rhs, pieces ->

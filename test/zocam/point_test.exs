@@ -42,18 +42,34 @@ defmodule Zocam.PointTest do
       assert Point.day({:nth, 1, :wednesday}).chain == [day: {:nth, 1, :wednesday}]
     end
 
-    # [claude-code] Changed 2026-08-05: these expected ArgumentError, from
-    # fallback clauses that no longer exist. The constructors are guard-only
-    # on purpose, so a value outside the vocabulary matches no clause. That
-    # is what buys the compile-time warning: the type checker can only flag
-    # a call that no clause accepts. See the note above the constructors.
-    test "constructors reject values outside their vocabulary" do
-      assert_raise FunctionClauseError, fn -> Point.month(:wednesday) end
-      assert_raise FunctionClauseError, fn -> Point.weekday(:may) end
-      assert_raise FunctionClauseError, fn -> Point.day(0) end
-      assert_raise FunctionClauseError, fn -> Point.day(32) end
-      assert_raise FunctionClauseError, fn -> Point.week(54) end
-      assert_raise FunctionClauseError, fn -> Point.day({:nth, 6, :wednesday}) end
+    # [cursor-agent] Changed 2026-08-06 (Linear YUR-81 and YUR-72).
+    # The vocabulary heads stay guard-only: the compile-time checker
+    # flags a bad literal, and the runtime FunctionClauseError is the
+    # accepted price. The calls go through apply/3 so the checker
+    # cannot see the literals - these misuses are deliberate, and the
+    # suite must stay free of warnings (YUR-72).
+    test "vocabulary constructors reject a value outside their vocabulary" do
+      misuse = fn fun, arg -> apply(Point, fun, [arg]) end
+
+      assert_raise FunctionClauseError, fn -> misuse.(:month, :wednesday) end
+      assert_raise FunctionClauseError, fn -> misuse.(:weekday, :may) end
+      assert_raise FunctionClauseError, fn -> misuse.(:year, :nope) end
+      assert_raise FunctionClauseError, fn -> misuse.(:time, :noon) end
+      assert_raise FunctionClauseError, fn -> misuse.(:day, {:nth, 1, :may}) end
+    end
+
+    # [cursor-agent] Added 2026-08-06 (Linear YUR-81). A range guard
+    # buys no compile-time flag: the checker carries integer(), not
+    # 1..53, so week(54) compiled in silence AND raised a bare
+    # FunctionClauseError. These heads teach at run time instead -
+    # the fallback raises an ArgumentError that names the range.
+    test "range constructors teach when the number is out of range" do
+      assert_raise ArgumentError, ~r/1\.\.53/, fn -> Point.week(54) end
+      assert_raise ArgumentError, ~r/1\.\.53/, fn -> Point.week(0) end
+      assert_raise ArgumentError, ~r/1\.\.31/, fn -> Point.day(0) end
+      assert_raise ArgumentError, ~r/1\.\.31/, fn -> Point.day(32) end
+      assert_raise ArgumentError, ~r/1\.\.31/, fn -> Point.day(-99) end
+      assert_raise ArgumentError, ~r/1\.\.5/, fn -> Point.day({:nth, 6, :wednesday}) end
     end
 
     # [claude-code] The other half of the same decision: values that reach a
