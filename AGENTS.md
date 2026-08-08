@@ -62,6 +62,21 @@ zocam (this repository, the time library) and s7r (the application) are two repo
 - A decision that touches both projects becomes two ADRs, one in each repository. Each ADR records its own side only.
 - If both sites need the same machinery (the Mermaid component, the ingest script, the AI SLOP chip), make it a package that both depend on. Do not copy the file, and do not read it across the boundary.
 
+## Shared components
+
+<!-- agent: claude — added 2026-08-08 at the user's request: "think in enterprise terms, abstract common components and make them available to all the rest of the apps". This is a paired rule; the s7r file carries it too, with its own examples. -->
+
+**When a second project needs a thing that already exists in a first one, the thing moves into a library that both depend on.** Do not copy it. The rule above says this for the two documentation sites; it is general, and it applies to interface components, to clients for a service, to build scripts, and to anything else with two callers.
+
+zocam is itself an instance of this rule: it is the time library, and it exists because s7r needed abstract spans and grounding, and something else will too.
+
+Four rules follow, and each one is a trap if you forget it.
+
+- **The second use is the trigger, not the first.** Write the thing inside the project that needs it. Move it when a second project asks. A library built for one caller encodes that caller's assumptions and then fights every later one.
+- **A library holds no domain model from its callers.** zocam knows about time. It must never learn what a schedule, an activity or an occurrence is. When you are not sure, ask whether a different caller could use the thing without learning s7r's words.
+- **The build step belongs to the library, never to the consumer.** A library that needs a toolchain runs it, commits the result, and ships it, so a consumer needs nothing installed. This is why hicha-ui — the platform's component library — commits its built bundle.
+- **Cross the boundary as a dependency, never as a path.** A `../` in a script or a page means the design is wrong. The two-mode switch that `ZOCAM_PATH` gives is the pattern for local development.
+
 ### Paired agent files
 
 Each repository keeps its own AGENTS.md. The two files are a pair:
