@@ -1,12 +1,19 @@
-# agent: claude — release workflow for zocam.
+# agent: claude — release workflow for zocam. Rewritten 2026-08-09:
+# a release is a GitHub Release now, not a bare tag.
 #
-# Trigger: push a git tag in the form vX.Y.Z (for example v0.1.0).
+# Draft it in the browser: Releases → Draft a new release → create the
+# tag vX.Y.Z there → write the notes → Publish. That click is the
+# trigger; this job is the gate behind it. It checks that the tag
+# equals the version in mix.exs, runs the tests, and publishes the
+# package to Hex.pm. `mix hex.publish` also builds the ExDoc pages and
+# uploads them to hexdocs.pm/zocam.
 #
-#   git tag v0.1.0 && git push origin v0.1.0
+# If the run fails, the Release exists but nothing was published:
+# delete the Release and the tag, fix, and release again.
 #
-# The job then: checks that the tag equals the version in mix.exs,
-# runs the tests, and publishes the package to Hex.pm. `mix hex.publish`
-# also builds the ExDoc pages and uploads them to hexdocs.pm/zocam.
+# The same shape exists in s7r's release.yml, which publishes nothing
+# because s7r is consumed from the tag itself. Keep the two workflows
+# telling the same story.
 #
 # Auth: the HEX_API_KEY repository secret. Hex 2.x has no CLI command for
 # key creation, and the API rejects key creation with token auth. Create
@@ -16,8 +23,8 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 jobs:
   publish:
