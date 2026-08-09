@@ -82,12 +82,19 @@ defmodule Zocam.MixProject do
       # none of the four is reachable here.
       #
       # Two ways to remove the dependency instead of reasoning about
-      # it, both tracked in Linear, neither free: swap tzdata's
-      # pluggable :http_client for an :httpc-based one (leaves hackney
-      # in the tree, so the audit still reports it), or drop
-      # timex/tzdata for the dependency-free `tz` package (Zocam.Span
-      # calls Tzdata.periods_for_time/3 directly, so this rewrites the
-      # DST core).
+      # it, neither free: swap tzdata's pluggable :http_client for an
+      # :httpc-based one (leaves hackney in the tree, so the audit
+      # still reports it), or drop timex/tzdata for the
+      # dependency-free `tz` package (Zocam.Span calls
+      # Tzdata.periods_for_time/3 directly, so this rewrites the DST
+      # core).
+      #
+      # [claude-code] DECIDED 2026-08-07 (Linear YUR-59): keep hackney
+      # and accept the audit noise. The exposure is zero, and each
+      # removal costs more than it gives — the first one does not even
+      # silence the audit. Thus `mix hex.audit` stays red, on purpose.
+      # Ask the question again when tzdata relaxes its cap on hackney,
+      # or when the DST core is opened for another reason.
       {:tzdata, "~> 1.1"},
       {:typed_struct, "~> 0.3"},
       {:ex_doc, "~> 0.40.3", only: :dev, runtime: false},
