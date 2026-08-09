@@ -93,6 +93,22 @@ zocam keeps its pages under `docs/content/`:
 - **The files are the pages.** No script generates an ADR page, and no script copies one.
 - Because a page holds Nuxt frontmatter and MDC syntax, an ADR is website content only. ExDoc publishes the API reference; it does not publish the ADRs. This keeps one record in one place.
 
+## Registries
+
+<!-- agent: claude — added 2026-08-09 at the user's request: publish shared components and libraries to registries. This is a paired rule; every platform repository carries its own side. -->
+
+A shared library reaches its consumers through a registry, not through a
+copied file and not through a moving git branch. zocam's registry is
+**Hex.pm**; the platform's other artifacts have theirs:
+
+- Public Elixir library → Hex.pm (zocam).
+- Private Elixir code → a GitHub git dependency pinned to a release tag
+  (s7r). GitHub Packages has no Hex support, and a paid private registry
+  is not worth one consumer.
+- JS packages → npm, on npmjs.com (hicha-ui's custom elements). GitHub's
+  npm registry demands a token even for a public install; npmjs needs none.
+- Container images → ghcr.io (the deployed applications).
+
 ## Ask me first
 
 Ask me before you:
@@ -220,7 +236,7 @@ _Figure 3 — How an arc becomes kernel intervals. AI generated, human reviewed.
 
 ## Releases
 
-- zocam is a public library. To release it, push a tag `vX.Y.Z`. GitHub Actions runs the tests and publishes the package to Hex.pm and the docs to hexdocs.pm.
+- <!-- agent: claude — rewritten 2026-08-09 at the user's request: a release is a GitHub Release, not a bare tag. This is a paired rule. --> **A release is a GitHub Release.** Draft it in the browser: Releases → Draft a new release → create the tag `vX.Y.Z` there → write the notes → Publish. The publish click triggers the workflow, which checks the tag, runs the tests, and publishes the package to Hex.pm and the docs to hexdocs.pm. A red run means nothing was published: delete the Release and its tag, fix, release again.
 - The tag must equal the `version` in `mix.exs`. The workflow stops when the two do not match.
 - The s7r application consumes the released package from Hex. In dev mode, s7r can point at this checkout from disk through its own configuration; zocam itself never reads s7r.
 - <!-- agent: claude — added 2026-08-05 at the user's request. --> **Prefer CI to a one-off command.** Work reaches production through a pull request: open a PR, let CI check it, merge it. Do not deploy from a local console. When a pipeline and a console command can do the same job, use the pipeline.
